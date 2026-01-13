@@ -233,6 +233,7 @@ class QwenClient:
             result = json.loads(content)
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse model response as JSON: {e}")
+            logger.warning(f"Raw response content (first 1000 chars): {content[:1000]!r}")
             stats['repair_attempted'] = True
             
             repaired = self._repair_json(content, str(e), max_tokens)
