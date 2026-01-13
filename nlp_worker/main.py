@@ -260,7 +260,7 @@ class NLPPackWorker:
             return False
         
         job_id = job['id']
-        attempt = job.get('attempt', 0)
+        attempt = job.get('attempt') or 0
         
         if attempt >= MAX_RETRIES_PER_JOB:
             logger.warning(f"Job {job_id} exceeded max retries ({MAX_RETRIES_PER_JOB}), marking failed")

@@ -58,12 +58,13 @@ def get_segments_missing_nlp(db) -> List[Dict]:
     ORDER BY e.work_id, s.number
     """
     
-    result = db.client.rpc('get_segments_missing_nlp_outputs', {}).execute()
+    try:
+        result = db.client.rpc('get_segments_missing_nlp_outputs', {}).execute()
+        if result.data:
+            return result.data
+    except Exception as e:
+        logger.warning(f"RPC get_segments_missing_nlp_outputs not available: {e}")
     
-    if result.data:
-        return result.data
-    
-    from supabase import PostgrestAPIError
     try:
         result = db.client.table('segments').select(
             'id, segment_type, number, title, editions!inner(id, work_id, media_type)'
