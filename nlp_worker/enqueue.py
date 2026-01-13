@@ -4,22 +4,25 @@ import os
 import sys
 import argparse
 from typing import List, Dict, Optional
+from dotenv import load_dotenv
 
 from .utils import get_logger
 from .supabase_client import get_supabase_client
 
+load_dotenv()
 logger = get_logger(__name__)
 
 
-def get_segments_missing_nlp(db) -> List[Dict]:
+def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
     """
-    Find segments that are missing any NLP outputs.
+    Find segments that are missing any NLP outputs using efficient batch query.
     
     Checks for missing:
     - cleaned_text asset
     - segment_summaries row
     - segment_entities row
     """
+    # Try using SQL with LEFT JOINs - much more efficient!
     query = """
     SELECT 
         s.id as segment_id,
@@ -29,68 +32,102 @@ def get_segments_missing_nlp(db) -> List[Dict]:
         e.media_type,
         e.work_id,
         e.id as edition_id,
-        CASE WHEN EXISTS (
-            SELECT 1 FROM segment_assets sa 
-            JOIN assets a ON sa.asset_id = a.id 
-            WHERE sa.segment_id = s.id AND a.asset_type = 'cleaned_text'
-        ) THEN true ELSE false END as has_cleaned,
-        CASE WHEN EXISTS (
-            SELECT 1 FROM segment_summaries ss WHERE ss.segment_id = s.id
-        ) THEN true ELSE false END as has_summary,
-        CASE WHEN EXISTS (
-            SELECT 1 FROM segment_entities se WHERE se.segment_id = s.id
-        ) THEN true ELSE false END as has_entities
+        CASE WHEN a.id IS NOT NULL THEN true ELSE false END as has_cleaned,
+        CASE WHEN ss.segment_id IS NOT NULL THEN true ELSE false END as has_summary,
+        CASE WHEN se.segment_id IS NOT NULL THEN true ELSE false END as has_entities
     FROM segments s
     JOIN editions e ON s.edition_id = e.id
-    WHERE NOT (
-        EXISTS (
-            SELECT 1 FROM segment_assets sa 
-            JOIN assets a ON sa.asset_id = a.id 
-            WHERE sa.segment_id = s.id AND a.asset_type = 'cleaned_text'
-        )
-        AND EXISTS (
-            SELECT 1 FROM segment_summaries ss WHERE ss.segment_id = s.id
-        )
-        AND EXISTS (
-            SELECT 1 FROM segment_entities se WHERE se.segment_id = s.id
-        )
-    )
+    LEFT JOIN segment_assets sa ON sa.segment_id = s.id
+    LEFT JOIN assets a ON sa.asset_id = a.id AND a.asset_type = 'cleaned_text'
+    LEFT JOIN segment_summaries ss ON ss.segment_id = s.id
+    LEFT JOIN segment_entities se ON se.segment_id = s.id
+    WHERE a.id IS NULL OR ss.segment_id IS NULL OR se.segment_id IS NULL
     ORDER BY e.work_id, s.number
     """
     
+    if limit:
+        query += f" LIMIT {limit}"
+    
     try:
-        result = db.client.rpc('get_segments_missing_nlp_outputs', {}).execute()
+        # Try direct SQL execution via RPC or raw SQL
+        result = db.client.rpc('execute_sql', {'query': query}).execute()
         if result.data:
             return result.data
     except Exception as e:
-        logger.warning(f"RPC get_segments_missing_nlp_outputs not available: {e}")
+        logger.debug(f"RPC execute_sql not available: {e}")
     
+    # Fallback: use optimized Supabase query with single request
     try:
-        result = db.client.table('segments').select(
-            'id, segment_type, number, title, editions!inner(id, work_id, media_type)'
-        ).execute()
+        query_builder = db.client.table('segments').select(
+            '''
+            id,
+            segment_type,
+            number,
+            title,
+            editions!inner(id, work_id, media_type),
+            segment_assets!left(
+                asset_id,
+                assets!inner(id, asset_type)
+            ),
+            segment_summaries!left(segment_id),
+            segment_entities!left(segment_id)
+            '''
+        )
+        
+        if limit:
+            query_builder = query_builder.limit(limit * 3)  # Get more to filter
+        
+        result = query_builder.execute()
         
         segments = []
         for row in result.data or []:
-            segment_id = row['id']
+            media_type = row['editions']['media_type']
             
-            has_cleaned = bool(db.get_segment_assets(segment_id, 'cleaned_text'))
-            has_summary = bool(db.get_segment_summary(segment_id))
-            has_entities = bool(db.get_segment_entities(segment_id))
+            # Check if segment has required raw asset based on media type
+            segment_assets = row.get('segment_assets') or []
+            has_raw_asset = False
             
+            for asset in segment_assets:
+                asset_type = asset.get('assets', {}).get('asset_type', '')
+                if media_type == 'novel' and asset_type == 'raw_html':
+                    has_raw_asset = True
+                    break
+                elif media_type == 'manhwa' and asset_type == 'raw_image':
+                    has_raw_asset = True
+                    break
+                elif media_type == 'anime' and asset_type == 'raw_subtitle':
+                    has_raw_asset = True
+                    break
+            
+            # Skip segments without raw assets
+            if not has_raw_asset:
+                continue
+            
+            # Check if outputs exist
+            has_cleaned = any(
+                asset.get('assets', {}).get('asset_type') == 'cleaned_text' 
+                for asset in segment_assets
+            )
+            has_summary = len(row.get('segment_summaries') or []) > 0
+            has_entities = len(row.get('segment_entities') or []) > 0
+            
+            # Only include if missing any output
             if not (has_cleaned and has_summary and has_entities):
                 segments.append({
-                    'segment_id': segment_id,
+                    'segment_id': row['id'],
                     'segment_type': row['segment_type'],
                     'number': row['number'],
                     'title': row.get('title'),
-                    'media_type': row['editions']['media_type'],
+                    'media_type': media_type,
                     'work_id': row['editions']['work_id'],
                     'edition_id': row['editions']['id'],
                     'has_cleaned': has_cleaned,
                     'has_summary': has_summary,
                     'has_entities': has_entities
                 })
+                
+                if limit and len(segments) >= limit:
+                    break
         
         return segments
     except Exception as e:
@@ -134,7 +171,7 @@ def enqueue_jobs(
     db = get_supabase_client()
     
     logger.info("Finding segments missing NLP processing...")
-    segments = get_segments_missing_nlp(db)
+    segments = get_segments_missing_nlp(db, limit=limit)
     
     if work_id:
         segments = [s for s in segments if s['work_id'] == work_id]

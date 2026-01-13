@@ -249,9 +249,21 @@ class SupabaseClient:
     
     def enqueue_nlp_job(self, segment_id: str, force: bool = False) -> Dict:
         """Enqueue an NLP pack job for a segment."""
+        # Get segment with edition and work info
+        seg_result = self.client.table('segments').select(
+            'id, edition_id, editions!inner(work_id)'
+        ).eq('id', segment_id).limit(1).execute()
+        
+        if not seg_result.data:
+            raise ValueError(f"Segment {segment_id} not found")
+        
+        seg = seg_result.data[0]
+        
         result = self.client.table('pipeline_jobs').insert({
             'job_type': 'summarize',
             'segment_id': segment_id,
+            'edition_id': seg['edition_id'],
+            'work_id': seg['editions']['work_id'],
             'input': {'task': 'nlp_pack_v1', 'force': force},
             'status': 'queued'
         }).execute()
