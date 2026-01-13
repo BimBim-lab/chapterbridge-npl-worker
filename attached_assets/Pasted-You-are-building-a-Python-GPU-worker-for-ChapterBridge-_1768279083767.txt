@@ -1,0 +1,299 @@
+You are building a Python GPU worker for ChapterBridge NLP processing.
+
+GOAL
+Create a single “NLP Pack” worker that:
+1) Reads a segment’s source text from R2 (text-only extraction done locally)
+2) Sends the text to a local Qwen 7B model (hosted via vLLM OpenAI-compatible server)
+3) Receives a structured JSON output that includes:
+   - cleaned_text (string)
+   - segment_summary object (fields for segment_summaries table)
+   - segment_entities object (fields for segment_entities table)
+   - OPTIONAL character_updates (ONLY when the segment is a NOVEL segment)
+4) Writes:
+   - cleaned_text to Cloudflare R2 as a derived file and inserts an assets row (asset_type='cleaned_text')
+   - upserts segment_summaries row (unique segment_id)
+   - upserts segment_entities row (unique segment_id)
+   - updates characters table ONLY for NOVEL segments (work_id-scoped merge)
+
+DATABASE SCHEMA (EXISTS) — from database-schema-updated-1-13.sql
+Relevant tables and constraints:
+
+pipeline_jobs:
+- job_type CHECK IN ('scrape','clean','summarize','entities','embed','match','sync_assets')
+- status CHECK IN ('queued','running','success','failed')
+- fields: source_id, work_id, edition_id, segment_id, input JSONB, output JSONB, attempt, error, created_at, started_at, finished_at
+
+assets:
+- asset_type CHECK IN ('raw_image','raw_subtitle','raw_html','ocr_json','cleaned_text','cleaned_json','other')
+- upload_source CHECK IN ('pipeline','manual','import')
+- r2_key UNIQUE
+
+segment_assets:
+- (segment_id, asset_id) PK, optional role
+
+segment_summaries:
+- UNIQUE(segment_id)
+- columns: summary, summary_short, events JSONB, beats JSONB, key_dialogue JSONB, tone JSONB, model_version, created_at, updated_at
+
+segment_entities:
+- UNIQUE(segment_id)
+- columns: characters, locations, items, time_refs, organizations, factions, titles_ranks, skills, creatures, concepts,
+           relationships, emotions, keywords (all JSONB), model_version, created_at, updated_at
+
+characters:
+- per work_id
+- UNIQUE(work_id, LOWER(name))
+- columns: name, aliases JSONB, character_facts JSONB, description, model_version, created_at, updated_at
+
+editions:
+- media_type IN ('novel','manhwa','anime')
+segments:
+- segment_type IN ('chapter','episode')
+
+ENV VARS (Replit Secrets)
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+R2_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=chapterbridge-data
+
+VLLM_BASE_URL=http://<runpod-ip>:8000/v1
+VLLM_API_KEY=token-anything
+VLLM_MODEL=qwen2.5-7b
+
+POLL_SECONDS=3
+MAX_RETRIES_PER_JOB=2
+MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v1
+
+MODEL HOSTING (RUNPOD) — provide scripts
+Create a script `serve_model.sh` showing how to launch vLLM OpenAI server using:
+- Model: Qwen/Qwen2.5-7B-Instruct-AWQ
+- Served name: qwen2.5-7b
+- Example:
+  python -m vllm.entrypoints.openai.api_server \
+    --model Qwen/Qwen2.5-7B-Instruct-AWQ \
+    --served-model-name qwen2.5-7b \
+    --host 0.0.0.0 --port 8000 \
+    --gpu-memory-utilization 0.90 \
+    --max-model-len 32768 \
+    --dtype auto
+
+JOB CONTRACT (pipeline_jobs)
+This worker will process jobs where:
+- pipeline_jobs.status='queued'
+- pipeline_jobs.job_type='summarize'  (we use summarize as the “NLP pack” queue)
+- pipeline_jobs.segment_id is required
+- pipeline_jobs.input.task must be:
+  "nlp_pack_v1"
+Optional:
+- input.force: true|false
+
+Example input JSON:
+{
+  "task": "nlp_pack_v1",
+  "force": false
+}
+
+INPUT SOURCES (R2 + assets)
+For a given segment_id, the worker must decide source based on edition.media_type:
+
+A) ANIME (edition.media_type='anime')
+- Find raw subtitle asset linked to this segment:
+  SELECT a.* FROM segment_assets sa JOIN assets a ON sa.asset_id=a.id
+  WHERE sa.segment_id=<segment_id> AND a.asset_type='raw_subtitle'
+  LIMIT 1;
+- Download SRT/VTT from R2.
+- LOCAL parse to text-only:
+  - keep chronological dialogue
+  - remove indices/timestamps
+  - remove obvious [MUSIC], etc (keep story-relevant bracket text)
+
+B) NOVEL (edition.media_type='novel')
+- Find raw html asset linked:
+  asset_type='raw_html'
+- Download HTML from R2.
+- LOCAL extract main text (BeautifulSoup):
+  - remove script/style/nav/footer
+  - output paragraphs joined by blank lines
+  - dedupe repeated boilerplate lines
+
+C) MANHWA (edition.media_type='manhwa')
+- Fetch all OCR page json assets linked:
+  SELECT a.* FROM segment_assets sa JOIN assets a ON sa.asset_id=a.id
+  WHERE sa.segment_id=<segment_id> AND a.asset_type='ocr_json';
+- Download all OCR JSON from R2.
+- LOCAL extract text-only:
+  - For each page json: collect lines[].text
+  - sort pages by page-XXXX in r2_key
+  - join into one chapter text, adding page separators like:
+    "\n\n[PAGE 0001]\n...\n\n[PAGE 0002]\n..."
+
+CRITICAL: The model input must be TEXT-ONLY (no HTML tags, no bbox arrays).
+
+OUTPUTS
+1) cleaned_text file written to R2 (assets.asset_type='cleaned_text', content-type text/plain)
+- Deterministic key:
+  derived/{media}/{work_id}/{edition_id}/{segment_type}-{NNNN}/cleaned.txt
+  where segment_type is episode or chapter; NNNN is zero-padded from segments.number (4 digits).
+- Insert into assets (upload_source='pipeline')
+- Link in segment_assets with role='cleaned_text'
+
+2) Upsert segment_summaries (UNIQUE segment_id)
+- summary: required
+- summary_short: 1–2 sentence headline
+- events: JSON array ordered start->end
+- beats: JSON array of story beat objects (setup/conflict/twist/resolution etc)
+- key_dialogue: JSON array of {speaker, to(optional), text, importance}
+- tone: JSON object {primary, secondary[], intensity}
+- model_version: MODEL_VERSION
+
+3) Upsert segment_entities (UNIQUE segment_id)
+All JSON arrays/objects as defined in schema:
+characters, locations, items, time_refs, organizations, factions, titles_ranks,
+skills, creatures, concepts, relationships, emotions, keywords
+- model_version: MODEL_VERSION
+
+4) Update characters table ONLY for NOVEL segments
+- For each character from model output:
+  - Find existing character by (work_id, lower(name)) OR any alias match (case-insensitive).
+  - If exists: merge aliases (set union), append new atomic facts (dedupe by normalized text),
+    optionally update description if empty or improved.
+  - If not exists: insert new row.
+- Do not run character updates for anime/manhwa segments.
+
+IDEMPOTENCY
+Before calling the model:
+- Compute output cleaned_text r2_key.
+- Check if assets already has that r2_key.
+- Check if segment_summaries and segment_entities rows already exist for segment_id.
+- If force != true and ALL outputs exist:
+  - mark job success with output={"skipped":true,"reason":"already_exists",...}
+  - do not call model
+
+If some outputs exist but others missing:
+- only generate missing outputs (still one model call is acceptable; write only missing parts).
+
+MODEL CALL (vLLM OpenAI-compatible)
+Use openai Python SDK with base_url=VLLM_BASE_URL and api_key=VLLM_API_KEY.
+You MUST request structured JSON output using vLLM structured outputs / guided JSON schema.
+
+Define ONE strict JSON schema for the model output:
+
+{
+  "type": "object",
+  "required": ["cleaned_text", "segment_summary", "segment_entities"],
+  "properties": {
+    "cleaned_text": {"type":"string"},
+    "segment_summary": {
+      "type":"object",
+      "required":["summary","summary_short","events","beats","key_dialogue","tone"],
+      "properties":{
+        "summary":{"type":"string"},
+        "summary_short":{"type":"string"},
+        "events":{"type":"array","items":{"type":"string"}},
+        "beats":{"type":"array","items":{"type":"object"}},
+        "key_dialogue":{"type":"array","items":{"type":"object"}},
+        "tone":{"type":"object"}
+      }
+    },
+    "segment_entities": {
+      "type":"object",
+      "required":[
+        "characters","locations","items","time_refs","organizations","factions","titles_ranks",
+        "skills","creatures","concepts","relationships","emotions","keywords"
+      ],
+      "properties":{
+        "characters":{"type":"array"},
+        "locations":{"type":"array"},
+        "items":{"type":"array"},
+        "time_refs":{"type":"array"},
+        "organizations":{"type":"array"},
+        "factions":{"type":"array"},
+        "titles_ranks":{"type":"array"},
+        "skills":{"type":"array"},
+        "creatures":{"type":"array"},
+        "concepts":{"type":"array"},
+        "relationships":{"type":"array"},
+        "emotions":{"type":"array"},
+        "keywords":{"type":"array"}
+      }
+    },
+    "character_updates": {
+      "type":"array",
+      "items":{
+        "type":"object",
+        "required":["name","aliases","character_facts"],
+        "properties":{
+          "name":{"type":"string"},
+          "aliases":{"type":"array","items":{"type":"string"}},
+          "character_facts":{"type":"array","items":{"type":"object"}},
+          "description":{"type":"string"}
+        }
+      }
+    }
+  }
+}
+
+Rules for the model:
+- cleaned_text: remove noise, dedupe repeated watermark/credits/boilerplate, fix spacing/punctuation,
+  keep story content in correct order.
+- summary: narrative of what happened; factual.
+- events: bullet list in chronological order.
+- beats: structural story beats useful for matching.
+- key_dialogue: include important quotes; include speaker and (optional) target.
+- entities: list entities with minimal metadata if possible (mentions/relevance is optional).
+- character_updates: ONLY produce when media_type is 'novel'; otherwise return empty array or omit.
+
+PIPELINE JOB STATE
+- Poll one job at a time:
+  SELECT * FROM pipeline_jobs
+  WHERE status='queued' AND job_type='summarize' AND (input->>'task')='nlp_pack_v1'
+  ORDER BY created_at ASC
+  LIMIT 1;
+
+- Set running:
+  status='running', started_at=NOW(), attempt=attempt+1
+
+- On success:
+  status='success', finished_at=NOW(), output={cleaned_asset_id, cleaned_r2_key, upserted:true, ...}
+
+- On failure:
+  status='failed', finished_at=NOW(), error=<message+stack>
+
+PROJECT STRUCTURE (DELIVERABLES)
+nlp_worker/
+  main.py                    # daemon poller
+  enqueue.py                 # enqueue missing NLP pack jobs
+  supabase_client.py         # DB helpers + upserts
+  r2_client.py               # boto3 S3 client
+  text_extractors/
+    subtitle_srt.py
+    novel_html.py
+    manhwa_ocr.py
+  qwen_client.py             # OpenAI SDK client to vLLM + structured outputs request
+  schema.py                  # JSON schema + validation
+  character_merge.py         # merge logic for characters table (novel only)
+  key_builder.py             # deterministic derived keys
+  utils.py                   # logging, retries, sha256
+serve_model.sh
+requirements.txt
+README.md
+
+ENQUEUE SCRIPT (enqueue.py)
+Create jobs for segments missing any of:
+- cleaned_text asset
+- segment_summaries row
+- segment_entities row
+Rules:
+- Insert pipeline_jobs with job_type='summarize', input.task='nlp_pack_v1'
+- segment_id must be set
+- force optional
+
+README MUST INCLUDE
+- How to start vLLM server on RunPod
+- How to set env vars
+- How to run enqueue and worker
+
+Now generate the full implementation with robust error handling, idempotency, and clear logging.
+Make it production-like and keep the code clean and readable.
