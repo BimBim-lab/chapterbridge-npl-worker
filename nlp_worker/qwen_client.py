@@ -125,10 +125,12 @@ class QwenClient:
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    extra_body={
-                        "guided_json": guided_json,
-                        "guided_decoding_backend": "outlines"
-                    }
+                    response_format={"type": "json_object"}
+                    # Note: Disabled guided_json for now as it may cause issues with long texts
+                    # extra_body={
+                    #     "guided_json": guided_json,
+                    #     "guided_decoding_backend": "outlines"
+                    # }
                 )
                 
                 latency_ms = (time.time() - start_time) * 1000

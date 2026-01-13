@@ -17,7 +17,8 @@
 set -e
 
 # Configuration (override with environment variables)
-MODEL="${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
+# Note: MODEL must be the actual HuggingFace model ID for loading
+MODEL="Qwen/Qwen2.5-7B-Instruct-AWQ"
 SERVED_NAME="${VLLM_SERVED_NAME:-qwen2.5-7b}"
 HOST="${VLLM_HOST:-0.0.0.0}"
 PORT="${VLLM_PORT:-8000}"
