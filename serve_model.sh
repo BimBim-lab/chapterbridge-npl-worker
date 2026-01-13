@@ -56,7 +56,6 @@ python -m vllm.entrypoints.openai.api_server \
     --max-model-len "${MAX_MODEL_LEN}" \
     --dtype "${DTYPE}" \
     --api-key "${API_KEY}" \
-    --enable-auto-tool-choice \
     --trust-remote-code
 
 # Note: The server will run in foreground and log to stdout.
