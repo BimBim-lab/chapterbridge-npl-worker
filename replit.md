@@ -8,15 +8,15 @@ A Python GPU worker for ChapterBridge that processes story segments through a Qw
 ```
 nlp_worker/
 ├── __init__.py              # Package init
-├── main.py                  # Daemon poller (entry point)
+├── main.py                  # Daemon poller with dry-run mode
 ├── enqueue.py               # Job enqueue CLI script
 ├── supabase_client.py       # Supabase database operations
-├── r2_client.py             # Cloudflare R2 storage client
-├── qwen_client.py           # vLLM OpenAI-compatible client
-├── schema.py                # JSON schema for model output
-├── character_merge.py       # Character table merge logic
+├── r2_client.py             # Cloudflare R2 storage with retry logic
+├── qwen_client.py           # vLLM OpenAI-compatible client with retry/repair
+├── schema.py                # Pydantic models for validation + normalization
+├── character_merge.py       # Character table merge with alias matching
 ├── key_builder.py           # Deterministic R2 key generation
-├── utils.py                 # Logging, retries, hashing
+├── utils.py                 # Logging, retries, hashing, text analysis
 └── text_extractors/
     ├── __init__.py
     ├── subtitle_srt.py      # Anime subtitle (SRT/VTT) extraction
@@ -24,22 +24,28 @@ nlp_worker/
     └── manhwa_ocr.py        # Manhwa OCR JSON extraction
 ```
 
-## Key Components
+## Key Features
 
-### Worker Flow
-1. Polls `pipeline_jobs` table for `job_type='summarize'` with `task='nlp_pack_v1'`
-2. Downloads source content from R2 (HTML, subtitles, or OCR JSON)
-3. Extracts clean text locally based on media type
-4. Sends to Qwen model for structured NLP analysis
-5. Writes results: cleaned text to R2, summaries/entities to Supabase
+### Schema Validation
+- Pydantic models ensure all required fields exist with correct types
+- All `segment_entities` fields guaranteed to be arrays (never null)
+- Auto-repair: If JSON fails validation, tries a repair call
 
-### Media Type Handling
-- **Anime**: SRT/VTT subtitle parsing, noise removal
-- **Novel**: HTML parsing with boilerplate removal
-- **Manhwa**: OCR JSON aggregation across pages
+### Partial Idempotency
+- Checks for existing outputs before processing
+- Only writes missing outputs (cleaned_text, summary, entities)
+- `force=true` will overwrite all outputs
 
-### Idempotency
-Worker checks for existing outputs before processing and skips if all exist (unless `force=true`)
+### Robust Retry Logic
+- Model calls: configurable timeout (180s default) and retries
+- R2 operations: 3 retries with exponential backoff
+- Handles connection errors, rate limits, and server errors
+
+### Metrics
+Each job records detailed stats in `pipeline_jobs.output.stats`:
+- Input/output chars, token estimates
+- Model latency, retry counts
+- Media-specific counts (pages, paragraphs, subtitle blocks)
 
 ## Environment Variables Required
 
@@ -63,6 +69,11 @@ VLLM_MODEL=qwen2.5-7b
 POLL_SECONDS=3
 MAX_RETRIES_PER_JOB=2
 MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v1
+
+# Timeout/Retry (optional)
+MODEL_TIMEOUT_SECONDS=180
+MODEL_MAX_RETRIES=2
+R2_MAX_RETRIES=3
 ```
 
 ## Running the Worker
@@ -71,12 +82,23 @@ MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v1
 # Verify setup
 python verify_worker.py
 
+# Dry-run (test without writing)
+python -m nlp_worker.main --segment-id <uuid> --no-write
+
 # Enqueue jobs for unprocessed segments
 python -m nlp_worker.enqueue
 
 # Start worker daemon
 python -m nlp_worker.main
 ```
+
+## R2 Key Format
+
+Cleaned text uses deterministic keys:
+```
+derived/{media_type}/{work_id}/{edition_id}/{segment_type}-{NNNN}/cleaned.txt
+```
+Where NNNN is zero-padded segment number (e.g., 13 → 0013)
 
 ## External Dependencies
 - **Supabase**: PostgreSQL database with ChapterBridge schema
@@ -85,7 +107,10 @@ python -m nlp_worker.main
 
 ## Recent Changes
 - 2026-01-13: Initial implementation of NLP Pack worker
-  - Complete pipeline job processing for summarize tasks
-  - Text extractors for all media types
-  - Structured JSON output with schema validation
-  - Character merge logic for novels
+- 2026-01-13: Added improvements:
+  - Pydantic schema validation with auto-repair
+  - Robust timeout/retry for model and R2
+  - Improved character merge with alias matching + fact dedupe
+  - Metrics in pipeline_jobs.output.stats
+  - Partial idempotency (write only missing outputs)
+  - Dry-run mode for testing

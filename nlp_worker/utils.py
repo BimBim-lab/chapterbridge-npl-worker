@@ -1,7 +1,8 @@
-"""Utility functions for logging, retries, and hashing."""
+"""Utility functions for logging, retries, hashing, and text analysis."""
 
 import hashlib
 import logging
+import re
 import time
 from functools import wraps
 from typing import Callable, TypeVar, Any
@@ -67,3 +68,26 @@ def safe_json_get(data: dict, *keys, default: Any = None) -> Any:
         if current is None:
             return default
     return current
+
+
+def count_paragraphs(text: str) -> int:
+    """Count paragraphs in text (separated by blank lines)."""
+    if not text:
+        return 0
+    paragraphs = re.split(r'\n\s*\n', text.strip())
+    return len([p for p in paragraphs if p.strip()])
+
+
+def count_subtitle_blocks(srt_content: str) -> int:
+    """Count subtitle blocks in SRT/VTT content."""
+    if not srt_content:
+        return 0
+    blocks = re.findall(r'\d+:\d+:\d+[,\.]\d+\s*-->', srt_content)
+    return len(blocks)
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count (roughly chars / 4)."""
+    if not text:
+        return 0
+    return len(text) // 4

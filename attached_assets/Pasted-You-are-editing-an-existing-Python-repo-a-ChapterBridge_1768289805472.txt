@@ -1,0 +1,117 @@
+You are editing an existing Python repo: a ChapterBridge NLP worker that:
+- polls Supabase pipeline_jobs
+- reads text-only from R2 (anime SRT, novel HTML, manhwa OCR JSON -> text)
+- calls a local Qwen 7B via vLLM OpenAI-compatible endpoint
+- writes cleaned_text to R2 and upserts segment_summaries, segment_entities, and updates characters (novel only)
+
+TASK: Improve the worker with the following MUST-HAVES (in this exact order of priority):
+(1) Strict schema normalization + validation (highest priority)
+(2) Deterministic R2 key builder using segment_type + segments.number (NNNN)
+(3) Robust timeout/retry policy for model and R2
+(4) Character updates: alias matching + fact dedupe
+(5) Logging + metrics in pipeline_jobs.output.stats
+(6) Partial idempotency (write only missing outputs)
+
+========================
+A) STRICT SCHEMA NORMALIZATION + VALIDATION (URGENT)
+========================
+1) Add a normalization layer AFTER model output and BEFORE DB upserts:
+- segment_summary fields must always exist:
+  summary (str), summary_short (str),
+  events (list), beats (list), key_dialogue (list),
+  tone (dict)
+- segment_entities must always exist and each field must be a LIST (never null):
+  characters, locations, items, time_refs, organizations, factions, titles_ranks,
+  skills, creatures, concepts, relationships, emotions, keywords
+If any of these are missing or null -> set default empty list [] or {}.
+
+2) Add a JSON schema validator (pydantic OR jsonschema). If invalid:
+- Retry model call 1 time with a “REPAIR JSON” prompt, giving the invalid payload and asking to fix it to the schema.
+- If still invalid -> fail job with clear error.
+
+========================
+B) DETERMINISTIC R2 KEY BUILDER (segment_type + number)
+========================
+Create/Update key_builder.py so cleaned_text key is ALWAYS:
+derived/{media}/{work_id}/{edition_id}/{segment_type}-{NNNN}/cleaned.txt
+Where:
+- segment_type is from DB (episode/chapter)
+- NNNN is int(segments.number) zero-padded to 4 digits (e.g. 13 -> 0013)
+Do NOT use “number-XXXX” or any alternative prefix. Use DB segment_type.
+
+(If segments.number may be decimal, define a rule: floor to int.)
+
+========================
+C) TIMEOUT + RETRY POLICY
+========================
+1) For model calls:
+- Add request timeout (e.g. 180s) and max retries 2 with exponential backoff.
+- Retry on: 429, 500-599, connection errors, invalid JSON, schema validation fail.
+
+2) For R2 GetObject/PutObject:
+- Add retries 3 with backoff.
+- Fail fast if object not found for required inputs.
+
+========================
+D) CHARACTER UPDATES (NOVEL ONLY) — DEDUPE + ALIAS MATCH
+========================
+Update character_merge.py so it:
+- Updates characters table ONLY when edition.media_type == 'novel'
+- Finds existing character by:
+  (work_id, lower(name)) OR any alias match (case-insensitive)
+- Merges aliases with set-union, normalized whitespace/punctuation.
+- Dedupe character_facts by normalized text. Also optionally include segment number/source to avoid duplicates.
+- Only update description if empty OR if new description is meaningfully longer and not boilerplate.
+- Always set model_version and updated_at.
+
+========================
+E) LOGGING + METRICS
+========================
+Add stats into pipeline_jobs.output.stats:
+- input_chars, input_tokens_est (estimate tokens ~ chars/4 or using tiktoken if available),
+- output_chars,
+- model_latency_ms,
+- retries_count,
+- media_type, segment_type, segment_number,
+- page_count for manhwa, paragraph_count for novel, subtitle_blocks for anime (if available)
+
+Also log at INFO:
+job_id, segment_id, media_type, output_r2_key, skipped_reason
+
+========================
+F) PARTIAL IDEMPOTENCY
+========================
+Currently worker may skip only when all outputs exist.
+Change it to:
+- Compute these booleans:
+  has_cleaned_asset (assets row exists for output key)
+  has_summary_row (segment_summaries exists for segment_id)
+  has_entities_row (segment_entities exists for segment_id)
+- If force != true and all three true -> skip (success)
+- Else run model once (OK), but write ONLY what is missing:
+  - if has_cleaned_asset, do not re-upload/insert assets
+  - if has_summary_row, do not upsert summary (unless you choose to refresh)
+  - if has_entities_row, do not upsert entities
+
+========================
+G) IMPLEMENTATION NOTES
+========================
+- Keep job_type='summarize' and input.task='nlp_pack_v1'.
+- Ensure the worker continues looping on failures.
+- Ensure all DB writes are safe (upsert by segment_id unique key).
+- Ensure segment_assets linking for cleaned_text uses role='cleaned_text'.
+
+========================
+DELIVERABLE
+========================
+Modify the existing codebase accordingly.
+Provide:
+- updated files (key_builder.py, schema/validator module, main worker loop)
+- updated character_merge.py
+- updated supabase_client.py upserts if needed
+- updated README with new env vars/timeouts and behavior
+- a small “dry-run” mode in main.py:
+  python main.py --segment-id <uuid> --no-write
+  It downloads sources, builds text-only, calls model, validates output, prints summary of stats, but does not write to DB/R2.
+
+Do not create a new project; edit the existing repository code in-place.

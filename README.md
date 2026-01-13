@@ -6,6 +6,15 @@ A Python GPU worker that processes story segments through a Qwen 7B language mod
 - Entity extraction (characters, locations, items, etc.)
 - Character database updates (novels only)
 
+## Features
+
+- **Strict Schema Validation**: Pydantic models ensure all required fields exist with correct types
+- **Auto-repair**: Attempts JSON repair if model output fails validation
+- **Partial Idempotency**: Only writes missing outputs, skips existing ones
+- **Robust Retry Logic**: Configurable retries with exponential backoff for model and R2 operations
+- **Metrics & Logging**: Detailed stats in `pipeline_jobs.output.stats`
+- **Dry-run Mode**: Test processing without writing to DB/R2
+
 ## Architecture
 
 ```
@@ -30,10 +39,8 @@ A Python GPU worker that processes story segments through a Qwen 7B language mod
 
 ## Environment Variables
 
-Create a `.env` file or set these in your environment:
-
 ```bash
-# Supabase
+# Database
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 
@@ -52,12 +59,17 @@ VLLM_MODEL=qwen2.5-7b
 POLL_SECONDS=3
 MAX_RETRIES_PER_JOB=2
 MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v1
+
+# Timeout/Retry Settings (optional)
+MODEL_TIMEOUT_SECONDS=180
+MODEL_MAX_RETRIES=2
+R2_MAX_RETRIES=3
+R2_RETRY_DELAY=1.0
 ```
 
 ## Installation
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -82,9 +94,24 @@ pip install -r requirements.txt
 
 ## Running the Worker
 
+### Dry-Run Mode (Testing)
+
+Test processing a specific segment without writing to DB/R2:
+
+```bash
+python -m nlp_worker.main --segment-id <uuid> --no-write
+```
+
+This will:
+- Download source content from R2
+- Extract text locally
+- Call the model
+- Validate and normalize output
+- Print stats summary without writing anything
+
 ### Enqueue Jobs
 
-First, create jobs for segments that need processing:
+Create jobs for segments that need processing:
 
 ```bash
 # Enqueue all missing segments
@@ -106,7 +133,6 @@ python -m nlp_worker.enqueue --force --limit 10
 ### Run the Worker Daemon
 
 ```bash
-# Start the worker (runs forever)
 python -m nlp_worker.main
 ```
 
@@ -114,72 +140,88 @@ The worker will:
 1. Poll Supabase for queued `summarize` jobs with `task=nlp_pack_v1`
 2. Download source content from R2 (HTML, subtitles, or OCR JSON)
 3. Extract clean text locally
-4. Send to Qwen model for analysis
-5. Write results back to R2 and Supabase
-
-## Project Structure
-
-```
-nlp_worker/
-├── main.py              # Daemon poller
-├── enqueue.py           # Job enqueue script
-├── supabase_client.py   # Database operations
-├── r2_client.py         # R2 storage client
-├── qwen_client.py       # vLLM API client
-├── schema.py            # JSON schema for model output
-├── character_merge.py   # Character table merge logic
-├── key_builder.py       # Deterministic R2 key generation
-├── utils.py             # Logging, retries, hashing
-└── text_extractors/
-    ├── subtitle_srt.py  # Anime subtitle extraction
-    ├── novel_html.py    # Novel HTML extraction
-    └── manhwa_ocr.py    # Manhwa OCR JSON extraction
-```
-
-## Job Contract
-
-Jobs are stored in `pipeline_jobs` table:
-
-```json
-{
-  "job_type": "summarize",
-  "status": "queued",
-  "segment_id": "<uuid>",
-  "input": {
-    "task": "nlp_pack_v1",
-    "force": false
-  }
-}
-```
+4. Send to Qwen model for analysis with structured JSON schema
+5. Validate and normalize output with auto-repair on failure
+6. Write only missing outputs (partial idempotency)
+7. Log detailed metrics to `pipeline_jobs.output.stats`
 
 ## Output Locations
 
 | Output | Location |
 |--------|----------|
-| Cleaned text | R2: `derived/{media}/{work_id}/{edition_id}/{type}-{NNNN}/cleaned.txt` |
+| Cleaned text | R2: `derived/{media}/{work_id}/{edition_id}/{segment_type}-{NNNN}/cleaned.txt` |
 | Summary | `segment_summaries` table |
 | Entities | `segment_entities` table |
 | Characters | `characters` table (novels only) |
 
+## R2 Key Format
+
+Cleaned text uses deterministic keys:
+```
+derived/{media_type}/{work_id}/{edition_id}/{segment_type}-{NNNN}/cleaned.txt
+```
+Where:
+- `media_type`: novel, manhwa, or anime
+- `segment_type`: chapter or episode (from DB)
+- `NNNN`: Zero-padded segment number (e.g., 13 → 0013)
+
+## Metrics
+
+Each job records stats in `pipeline_jobs.output.stats`:
+
+```json
+{
+  "media_type": "novel",
+  "segment_type": "chapter",
+  "segment_number": 42,
+  "input_chars": 15234,
+  "input_tokens_est": 3808,
+  "output_chars": 8521,
+  "model_latency_ms": 4523,
+  "retries_count": 0,
+  "paragraph_count": 45,
+  "repair_attempted": false,
+  "repair_succeeded": false
+}
+```
+
+## Schema Normalization
+
+The worker uses Pydantic models to ensure all output fields are properly typed:
+- All `segment_entities` fields are guaranteed to be arrays (never null)
+- All `segment_summary` fields have defaults
+- Invalid JSON triggers auto-repair with a second model call
+
 ## Idempotency
 
-The worker checks for existing outputs before processing:
-- If all outputs exist and `force=false`: job is skipped
-- If some outputs exist: only missing outputs are written
-- `force=true` will reprocess and overwrite
+- Checks for existing: cleaned_text asset, segment_summaries row, segment_entities row
+- If all exist and `force=false`: job is skipped with `output.skipped=true`
+- If some exist: only missing outputs are written
+- `force=true` will reprocess and overwrite all outputs
 
 ## Error Handling
 
+- Model calls retry up to `MODEL_MAX_RETRIES` times with exponential backoff
+- R2 operations retry up to `R2_MAX_RETRIES` times
+- Invalid JSON triggers one repair attempt
 - Jobs retry up to `MAX_RETRIES_PER_JOB` times
 - Failed jobs are marked with full stack trace in `error` column
-- Worker continues polling after individual job failures
 
-## Development
+## Project Structure
 
-```bash
-# Run tests (if available)
-pytest tests/
-
-# Type checking
-mypy nlp_worker/
+```
+nlp_worker/
+├── main.py              # Daemon poller + dry-run mode
+├── enqueue.py           # Job enqueue script
+├── supabase_client.py   # Database operations
+├── r2_client.py         # R2 storage with retry logic
+├── qwen_client.py       # vLLM client with retry + repair
+├── schema.py            # Pydantic models + validation
+├── character_merge.py   # Character merge with alias matching
+├── key_builder.py       # Deterministic R2 key generation
+├── utils.py             # Logging, retries, text analysis
+└── text_extractors/
+    ├── subtitle_srt.py  # Anime subtitle extraction
+    ├── novel_html.py    # Novel HTML extraction
+    └── manhwa_ocr.py    # Manhwa OCR JSON extraction
 ```
