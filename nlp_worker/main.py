@@ -6,6 +6,10 @@ import time
 import argparse
 import traceback
 from typing import Dict, Any, Optional, List
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from .utils import get_logger, count_paragraphs, count_subtitle_blocks
 from .supabase_client import get_supabase_client, SupabaseClient
