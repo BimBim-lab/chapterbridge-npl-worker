@@ -192,7 +192,8 @@ def merge_character_facts(
     existing: List[Dict],
     new: List[Dict],
     segment_number: int,
-    source_id: Optional[str] = None
+    source_id: Optional[str] = None,
+    max_facts: int = 30
 ) -> List[Dict]:
     """
     Merge character facts with improved deduplication.
@@ -200,6 +201,7 @@ def merge_character_facts(
     - Dedupes by normalized text + chapter/segment
     - Adds segment number to new facts without chapter/segment
     - Optionally adds source identifier
+    - Limits total facts to max_facts (default 30), keeping newest
     """
     seen_facts: Set[str] = set()
     result: List[Dict] = []
@@ -227,6 +229,10 @@ def merge_character_facts(
         if key and key not in seen_facts:
             seen_facts.add(key)
             result.append(new_fact)
+    
+    # Limit to max_facts, keeping the newest (last items)
+    if len(result) > max_facts:
+        result = result[-max_facts:]
     
     return result
 
