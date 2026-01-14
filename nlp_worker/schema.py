@@ -110,33 +110,11 @@ class SegmentEntitiesModel(BaseModel):
         return data
 
 
-class CharacterProfileModel(BaseModel):
-    """Character profile fields for structured extraction."""
-    role_identity: str = ""  # protagonist, antagonist, supporting, etc
-    occupation_rank_status: str = ""  # job, rank, social status
-    affiliation: str = ""  # guild, organization, family
-    core_ability_or_skill: str = ""  # main ability or skill
-    core_personality: str = ""  # 1-2 key traits
-    motivation_or_goal: str = ""  # main goal or motivation
-    key_relationship: str = ""  # most important relationship (optional)
-    distinctive_appearance: str = ""  # unique physical traits (optional)
-    backstory_hook: str = ""  # relevant backstory (optional)
-    notable_constraint_or_secret: str = ""  # constraints or secrets (optional)
-    
-    @field_validator('*', mode='before')
-    @classmethod
-    def convert_list_to_string(cls, v):
-        """Convert list to comma-separated string for all fields."""
-        if isinstance(v, list):
-            return ', '.join(str(item) for item in v if item)
-        return v if v else ""
-
-
 class CharacterUpdateModel(BaseModel):
     """Character update from model output."""
     name: str
     aliases: List[str] = Field(default_factory=list)
-    profile: Dict[str, str] = Field(default_factory=dict)  # CharacterProfileModel as dict
+    facts: List[str] = Field(default_factory=list)  # Simple array of fact strings
     
     @field_validator('name', mode='before')
     @classmethod
@@ -177,14 +155,17 @@ class CharacterUpdateModel(BaseModel):
             return [v]
         return list(v) if v else []
     
-    @field_validator('profile', mode='before')
+    @field_validator('facts', mode='before')
     @classmethod
-    def ensure_profile_dict(cls, v):
+    def ensure_facts_list(cls, v):
+        """Ensure facts is a list of strings."""
         if v is None:
-            return {}
-        if isinstance(v, dict):
-            return v
-        return {}
+            return []
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if item and str(item).strip()]
+        return []
 
 
 class NLPOutputModel(BaseModel):

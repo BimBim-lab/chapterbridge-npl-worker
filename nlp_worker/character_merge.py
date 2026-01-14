@@ -245,10 +245,8 @@ def should_update_description(existing_desc: str, new_desc: str) -> bool:
     if not new_norm:
         return False
     
-    if new_norm in BOILERPLATE_DESCRIPTIONS:
-        return False
-    
-    if not existing_norm or existing_norm in BOILERPLATE_DESCRIPTIONS:
+    # Simple check: prefer new if longer and substantial
+    if not existing_norm:
         return True
     
     if len(new_desc) > len(existing_desc) * 1.5 and len(new_desc) > 50:
@@ -260,7 +258,7 @@ def should_update_description(existing_desc: str, new_desc: str) -> bool:
 def process_character_updates(
     work_id: str,
     work_characters: List[Dict],
-    character_updates: List[Dict],
+    character_updates: List[Any],  # Can be List[CharacterUpdateModel] or List[Dict]
     segment_number: int,
     model_version: str,
     db_client: Any,
@@ -294,25 +292,32 @@ def process_character_updates(
     source_id = f"segment_{segment_number}"
     
     for char_update in character_updates:
-        name = (char_update.get('name') or '').strip()
+        # Support both dict and CharacterUpdateModel
+        if hasattr(char_update, 'name'):
+            # CharacterUpdateModel instance
+            name = (char_update.name or '').strip()
+            aliases = char_update.aliases or []
+            facts = char_update.facts or []
+        else:
+            # Dict (backward compatibility)
+            name = (char_update.get('name') or '').strip()
+            aliases = char_update.get('aliases') or []
+            facts = char_update.get('facts') or []
+        
         if not name:
             logger.debug("Skipping character with empty name")
             stats['skipped'] += 1
             continue
         
-        aliases = char_update.get('aliases') or []
-        profile = char_update.get('profile') or {}
-        
         # Don't generate description - leave empty per user request
         description = ""
         
-        # Convert profile to character_facts format for storage
-        profile_facts = []
-        for field, value in profile.items():
-            if value and value.strip():
-                profile_facts.append({
-                    'field': field,
-                    'value': value.strip(),
+        # Convert facts array to character_facts format for storage
+        new_facts = []
+        for fact in facts:
+            if fact and str(fact).strip():
+                new_facts.append({
+                    'fact': str(fact).strip(),
                     'segment': segment_number,
                     'source': source_id
                 })
@@ -326,24 +331,9 @@ def process_character_updates(
                 existing.get('name', '')
             )
             
-            # Merge profile facts with existing facts
+            # Merge new facts with existing facts (simple append)
             existing_facts = existing.get('character_facts', [])
-            merged_facts = existing_facts[:]
-            
-            # Update or add profile fields
-            for new_fact in profile_facts:
-                # Find if field already exists
-                field_exists = False
-                for i, existing_fact in enumerate(merged_facts):
-                    if existing_fact.get('field') == new_fact['field']:
-                        # Update if newer or more complete
-                        if len(new_fact.get('value', '')) > len(existing_fact.get('value', '')):
-                            merged_facts[i] = new_fact
-                        field_exists = True
-                        break
-                
-                if not field_exists:
-                    merged_facts.append(new_fact)
+            merged_facts = existing_facts + new_facts
             
             db_client.update_character(existing['id'], {
                 'aliases': merged_aliases,
@@ -364,7 +354,7 @@ def process_character_updates(
                 work_id=work_id,
                 name=name,
                 aliases=clean_aliases,
-                character_facts=profile_facts,
+                character_facts=new_facts,
                 description='',  # Keep empty per user request
                 model_version=model_version
             )

@@ -29,34 +29,38 @@ def build_system_prompt(media_type: str, work_title: Optional[str] = None) -> st
     char_example = ""
     if media_type == 'novel':
         char_instruction = """
-- character_updates: REQUIRED array of character profile objects. For EACH **NAMED** character (with proper name, NOT generic terms):
-  * name: REAL character name ONLY as it appears in the text (e.g., "Arthur Leywin", "Reynolds Leywin", "Alice Leywin"). 
-    ⚠️ NEVER use:
-      - Generic terms: "ayah", "ibu", "pria", "wanita", "orang kekar", "father", "mother", "man", "woman", "person"
-      - Role placeholders: "the protagonist", "the hero", "the main character", "the villain"
-      - Names from other stories you know
-    ⚠️ ONLY extract if the actual name (proper noun) is written in the text
-  * aliases: array of alternate names/nicknames (empty array if none)
-  * profile: object with character details:
-    - role_identity: role in story ONLY if clearly stated (protagonist/antagonist/supporting/love interest/mentor/villain/comic relief). Leave empty "" if not stated.
-    - occupation_rank_status: job/rank/social status ONLY if mentioned (e.g., "hunter E-rank", "doctor", "princess", "student")
-    - affiliation: organization/guild/family ONLY if mentioned (e.g., "Guild X", "Family Y")
-    - core_ability_or_skill: main ability or skill ONLY if mentioned (e.g., "magic healing", "swordsmanship", "hacking")
-    - core_personality: 1-2 clear traits ONLY if described (e.g., "quiet", "stubborn", "protective", "smart")
-    - motivation_or_goal: main goal ONLY if stated (e.g., "wants to save family", "seeks revenge")
-    - key_relationship: most important relationship ONLY if mentioned (optional, e.g., "teammate of X", "rival of Y", "parent of Z")
-    - distinctive_appearance: unique physical trait ONLY if described (optional, e.g., "white hair", "heterochromia eyes")
-    - backstory_hook: relevant backstory ONLY if revealed (optional, e.g., "from poor family", "former king")
-    - notable_constraint_or_secret: constraint/secret ONLY if revealed (optional, e.g., "hiding identity", "has illness")
+- character_updates: Array of character objects. For EACH **NAMED** character:
+  * name: Character's REAL NAME as written in text (e.g., "Arthur Leywin", "Alice Leywin")
+    ⚠️ NEVER use generic terms ("ayah", "pria", "the protagonist") or names from other stories
+  * aliases: Array of alternate names/nicknames (empty array [] if none)
+  * facts: Array of SHORT fact strings about this character extracted from THIS segment:
+    - Role: "protagonist", "antagonist", "supporting", etc.
+    - Occupation: "student", "hunter E-rank", "doctor", "princess"
+    - Traits: "brave", "protective", "smart", "quiet"
+    - Abilities: "has magic", "expert swordsman", "can fly"
+    - Goals: "wants to protect family", "seeking revenge"
+    - Relationships: "son of X", "friend of Y"
+    - Appearance: "white hair", "scar on face"
+    - Any other notable facts
   
-  CRITICAL: 
-  - Only include characters whose ACTUAL NAME is written in the text
-  - If text says "the protagonist wakes up" but doesn't give a name, DO NOT extract
-  - Wait for the name to be revealed before creating character entry"""
+  ⚠️ CRITICAL: Only extract characters with ACTUAL NAMES in the text"""
         
-        # No concrete example to avoid model copying names
         char_example = """
-  "character_updates": [] // Add character objects here ONLY when actual names appear in text"""
+  "character_updates": [
+    {
+      "name": "Arthur Leywin",
+      "aliases": ["Art"],
+      "facts": [
+        "protagonist",
+        "reincarnated from another world",
+        "young child",
+        "learning magic",
+        "protective of his family"
+      ]
+    }
+  ]
+  
+  // Use actual names from the text, extract simple facts as strings"""
     else:
         char_instruction = "- character_updates: Return empty array [] (not applicable for this media type)"
         char_example = '  "character_updates": []'
