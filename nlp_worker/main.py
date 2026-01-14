@@ -6,6 +6,7 @@ import time
 import argparse
 import traceback
 from typing import Dict, Any, Optional, List
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -22,6 +23,7 @@ logger = get_logger(__name__)
 
 POLL_SECONDS = int(os.environ.get('POLL_SECONDS', '3'))
 MAX_RETRIES_PER_JOB = int(os.environ.get('MAX_RETRIES_PER_JOB', '2'))
+NUM_WORKERS = int(os.environ.get('NUM_WORKERS', '2'))
 MODEL_VERSION = os.environ.get('MODEL_VERSION', 'qwen2.5-7b-awq_nlp_pack_v1')
 
 
@@ -309,25 +311,49 @@ class NLPPackWorker:
         return True
     
     def run_forever(self):
-        """Run the worker daemon loop."""
+        """Run the worker daemon loop with optional concurrency."""
         if self.dry_run:
             logger.error("Cannot run daemon in dry-run mode")
             return
-        
-        logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s)")
-        
-        while True:
-            try:
-                had_work = self.run_once()
-                
-                if not had_work:
+
+        if NUM_WORKERS <= 1:
+            logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers=1)")
+            while True:
+                try:
+                    had_work = self.run_once()
+                    if not had_work:
+                        time.sleep(POLL_SECONDS)
+                except KeyboardInterrupt:
+                    logger.info("Shutting down worker...")
+                    break
+                except Exception as e:
+                    logger.error(f"Unexpected error in main loop: {e}")
                     time.sleep(POLL_SECONDS)
-            except KeyboardInterrupt:
-                logger.info("Shutting down worker...")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in main loop: {e}")
-                time.sleep(POLL_SECONDS)
+            return
+
+        logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers={NUM_WORKERS})")
+
+        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+            while True:
+                try:
+                    futures = [executor.submit(self.run_once) for _ in range(NUM_WORKERS)]
+                    had_work = False
+
+                    for future in futures:
+                        try:
+                            if future.result():
+                                had_work = True
+                        except Exception as e:
+                            logger.error(f"Worker thread error: {e}")
+
+                    if not had_work:
+                        time.sleep(POLL_SECONDS)
+                except KeyboardInterrupt:
+                    logger.info("Shutting down worker...")
+                    break
+                except Exception as e:
+                    logger.error(f"Unexpected error in main loop: {e}")
+                    time.sleep(POLL_SECONDS)
 
 
 def run_dry_run(segment_id: str):

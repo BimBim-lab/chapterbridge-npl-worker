@@ -95,6 +95,7 @@ Even if pods are interrupted 5-10 times and jobs need to retry, the cost savings
    VLLM_API_KEY=token-anything
    VLLM_MODEL=qwen2.5-7b
    MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v2_no_cleaned_text
+   NUM_WORKERS=2
    JOB_TIMEOUT_MINUTES=3
    MAX_RETRIES_PER_JOB=2
    ```
@@ -129,6 +130,7 @@ This indicates the worker detected and recovered from a previous interruption.
 1. **Use appropriate timeouts:** 
    - Set `JOB_TIMEOUT_MINUTES` high enough to cover 99% of jobs
    - But low enough to detect interruptions quickly (3min is good default)
+   - Mulai `NUM_WORKERS=2`, naikan ke 3-4 hanya jika VRAM/GPU util masih longgar
 
 2. **Monitor retry counts:**
    - Check `pipeline_jobs.attempt` field in database

@@ -58,6 +58,7 @@ VLLM_MODEL=qwen2.5-7b
 # Worker Settings
 POLL_SECONDS=3
 MAX_RETRIES_PER_JOB=2
+NUM_WORKERS=2
 MODEL_VERSION=qwen2.5-7b-awq_nlp_pack_v2_no_cleaned_text
 JOB_TIMEOUT_MINUTES=3  # Auto-reset stale jobs (for interruptible instances)
 
