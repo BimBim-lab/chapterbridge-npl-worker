@@ -122,6 +122,14 @@ class CharacterProfileModel(BaseModel):
     distinctive_appearance: str = ""  # unique physical traits (optional)
     backstory_hook: str = ""  # relevant backstory (optional)
     notable_constraint_or_secret: str = ""  # constraints or secrets (optional)
+    
+    @field_validator('*', mode='before')
+    @classmethod
+    def convert_list_to_string(cls, v):
+        """Convert list to comma-separated string for all fields."""
+        if isinstance(v, list):
+            return ', '.join(str(item) for item in v if item)
+        return v if v else ""
 
 
 class CharacterUpdateModel(BaseModel):
