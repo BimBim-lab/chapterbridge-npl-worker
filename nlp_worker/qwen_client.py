@@ -224,6 +224,18 @@ class QwenClient:
         
         try:
             result = json.loads(content)
+            logger.debug(f"Parsed JSON keys: {list(result.keys())}")
+            if 'character_updates' in result:
+                char_updates = result.get('character_updates')
+                logger.debug(f"character_updates type: {type(char_updates)}, value: {char_updates}")
+                if isinstance(char_updates, list) and char_updates:
+                    logger.debug(f"First item type: {type(char_updates[0])}, value: {char_updates[0]}")
+            logger.debug(f"Parsed JSON keys: {list(result.keys())}")
+            if 'character_updates' in result:
+                char_updates = result.get('character_updates')
+                logger.debug(f"character_updates type: {type(char_updates)}, value: {char_updates}")
+                if isinstance(char_updates, list) and char_updates:
+                    logger.debug(f"First item type: {type(char_updates[0])}, value: {char_updates[0]}")
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse model response as JSON: {e}")
             logger.warning(f"Raw response content (first 1000 chars): {content[:1000]!r}")

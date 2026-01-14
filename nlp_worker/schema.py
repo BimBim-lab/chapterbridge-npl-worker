@@ -153,7 +153,16 @@ class NLPOutputModel(BaseModel):
     def ensure_char_updates_list(cls, v):
         if v is None:
             return []
-        return list(v) if v else []
+        if not isinstance(v, list):
+            return []
+        # Filter out invalid entries (strings, nulls, etc)
+        valid_updates = []
+        for item in v:
+            if isinstance(item, dict) and item.get('name'):
+                valid_updates.append(item)
+            else:
+                logger.warning(f"Skipping invalid character_update entry: {type(item)} - {item}")
+        return valid_updates
 
     @model_validator(mode='before')
     @classmethod
