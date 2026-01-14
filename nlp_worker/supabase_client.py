@@ -140,6 +140,18 @@ class SupabaseClient:
         
         return self._execute_with_retry(_fetch)
     
+    def get_work_title(self, work_id: str) -> Optional[str]:
+        """Get work title by ID."""
+        def _fetch():
+            result = self.client.table('works') \
+                .select('title') \
+                .eq('id', work_id) \
+                .limit(1) \
+                .execute()
+            return result.data[0].get('title') if result.data and len(result.data) > 0 else None
+        
+        return self._execute_with_retry(_fetch)
+    
     def get_segment_assets(self, segment_id: str, asset_type: str) -> List[Dict]:
         """Get assets linked to a segment by type."""
         def _fetch():

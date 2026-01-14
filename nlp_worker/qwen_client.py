@@ -19,8 +19,13 @@ MODEL_TIMEOUT = int(os.environ.get('MODEL_TIMEOUT_SECONDS', '180'))
 MODEL_MAX_RETRIES = int(os.environ.get('MODEL_MAX_RETRIES', '2'))
 
 
-def build_system_prompt(media_type: str) -> str:
+def build_system_prompt(media_type: str, work_title: Optional[str] = None) -> str:
     """Build the system prompt for NLP processing."""
+    work_context = ""
+    if work_title:
+        work_context = f"""\n\n=== WORK CONTEXT ===
+You are analyzing content from the work titled: \"{work_title}\"\nONLY extract information from THIS work. Ignore any previous context from other works.\n===================\n"""
+    
     char_instruction = ""
     char_example = ""
     if media_type == 'novel':
@@ -80,7 +85,7 @@ def build_system_prompt(media_type: str) -> str:
         char_instruction = "- character_updates: Return empty array [] (not applicable for this media type)"
         char_example = '  "character_updates": []'
 
-    return f"""You are an expert NLP processor for story content analysis. Your task is to process raw text from stories and produce structured analysis output.
+    return f"""You are an expert NLP processor for story content analysis. Your task is to process raw text from stories and produce structured analysis output.{work_context}
 
 TASK: Analyze the provided story text and output a JSON object with the following structure:
 
@@ -233,6 +238,7 @@ class QwenClient:
         self, 
         source_text: str, 
         media_type: str,
+        work_title: Optional[str] = None,
         max_tokens: int = 16000,
         temperature: float = 0.3
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
@@ -260,7 +266,7 @@ class QwenClient:
             'repair_succeeded': False
         }
         
-        system_prompt = build_system_prompt(media_type)
+        system_prompt = build_system_prompt(media_type, work_title)
         user_prompt = build_user_prompt(source_text, media_type)
         
         messages = [

@@ -189,7 +189,11 @@ class NLPPackWorker:
         output_result['stats'].update(extraction_stats)
         logger.info(f"Extracted {len(source_text)} chars of source text")
         
-        model_output, model_stats = self.qwen.process_text(source_text, media_type)
+        # Get work title for context isolation
+        work_title = self.db.get_work_title(work_id)
+        logger.info(f"Processing work: {work_title}")
+        
+        model_output, model_stats = self.qwen.process_text(source_text, media_type, work_title)
         if not model_output:
             raise ValueError("Model processing failed to produce valid output")
         
