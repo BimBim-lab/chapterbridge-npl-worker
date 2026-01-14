@@ -5,6 +5,7 @@ import sys
 import time
 import argparse
 import traceback
+import threading
 from typing import Dict, Any, Optional, List
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
@@ -35,6 +36,7 @@ class NLPPackWorker:
         self.db = get_supabase_client() if not dry_run else None
         self.r2 = get_r2_client() if not dry_run else None
         self.qwen = get_qwen_client()
+        self._poll_lock = threading.Lock()  # Prevent race conditions in concurrent polling
         logger.info(f"NLP Pack Worker initialized (dry_run={dry_run})")
     
     def _init_clients_for_read(self):
@@ -274,7 +276,9 @@ class NLPPackWorker:
             logger.warning("run_once called in dry-run mode - use process_segment_direct instead")
             return False
         
-        job = self.db.poll_next_job()
+        # Serialize polling to prevent race conditions in concurrent workers
+        with self._poll_lock:
+            job = self.db.poll_next_job()
         
         if not job:
             return False
