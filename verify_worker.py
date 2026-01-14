@@ -62,12 +62,6 @@ def main():
         errors.append(f"nlp_worker.schema: {e}")
     
     try:
-        from nlp_worker import key_builder
-        print("  nlp_worker.key_builder: OK")
-    except ImportError as e:
-        errors.append(f"nlp_worker.key_builder: {e}")
-    
-    try:
         from nlp_worker.text_extractors import extract_subtitle_text, extract_novel_text, extract_manhwa_text
         print("  nlp_worker.text_extractors: OK")
     except ImportError as e:
@@ -125,7 +119,6 @@ This is dialogue text.
         from nlp_worker.schema import validate_and_normalize, normalize_model_output, NLPOutputModel
         
         test_output = {
-            "cleaned_text": "This is test content.",
             "segment_summary": {
                 "summary": "A test summary.",
                 "summary_short": "Test",
@@ -159,7 +152,7 @@ This is dialogue text.
         else:
             errors.append("Null-to-list normalization failed")
         
-        incomplete = {"cleaned_text": "Test", "segment_summary": {}, "segment_entities": {}}
+        incomplete = {"segment_summary": {}, "segment_entities": {}}
         normalized2 = normalize_model_output(incomplete)
         if all(isinstance(normalized2['segment_entities'][k], list) for k in ['characters', 'locations', 'items']):
             print("  Empty field defaults: OK")
@@ -172,24 +165,26 @@ This is dialogue text.
         traceback.print_exc()
         errors.append(f"Schema validation: {e}")
     
-    print("\n[6/6] Testing key builder...")
+    print("\n[6/6] Testing environment variables...")
     try:
-        from nlp_worker.key_builder import build_cleaned_text_key
-        
-        key = build_cleaned_text_key(
-            media_type="novel",
-            work_id="abc123",
-            edition_id="def456",
-            segment_type="chapter",
-            segment_number=13
-        )
-        expected = "derived/novel/abc123/def456/chapter-0013/cleaned.txt"
-        if key == expected:
-            print(f"  Key format: OK ({key})")
+        import os
+        required_vars = [
+            'SUPABASE_URL',
+            'SUPABASE_SERVICE_ROLE_KEY',
+            'R2_ENDPOINT',
+            'R2_ACCESS_KEY_ID',
+            'R2_SECRET_ACCESS_KEY',
+            'VLLM_BASE_URL',
+            'VLLM_MODEL'
+        ]
+        missing = [v for v in required_vars if not os.environ.get(v)]
+        if missing:
+            errors.append(f"Missing environment variables: {', '.join(missing)}")
         else:
-            errors.append(f"Key format mismatch: {key} != {expected}")
+            print(f"  All {len(required_vars)} required variables set")
+            print("  Environment: OK")
     except Exception as e:
-        errors.append(f"Key builder: {e}")
+        errors.append(f"Environment check: {e}")
     
     print("\n" + "=" * 60)
     if errors:
