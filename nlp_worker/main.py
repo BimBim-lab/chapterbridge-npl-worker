@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 POLL_SECONDS = int(os.environ.get('POLL_SECONDS', '3'))
 MAX_RETRIES_PER_JOB = int(os.environ.get('MAX_RETRIES_PER_JOB', '2'))
 NUM_WORKERS = int(os.environ.get('NUM_WORKERS', '2'))
+MAX_JOBS_PER_RESTART = int(os.environ.get('MAX_JOBS_PER_RESTART', '150'))  # Restart after N jobs to prevent memory leaks
 MODEL_VERSION = os.environ.get('MODEL_VERSION', 'qwen2.5-7b-awq_nlp_pack_v1')
 
 
@@ -37,6 +38,8 @@ class NLPPackWorker:
         self.r2 = get_r2_client() if not dry_run else None
         self.qwen = get_qwen_client()
         self._poll_lock = threading.Lock()  # Prevent race conditions in concurrent polling
+        self._jobs_processed = 0  # Track jobs for graceful restart
+        self._jobs_lock = threading.Lock()  # Protect job counter
         logger.info(f"NLP Pack Worker initialized (dry_run={dry_run})")
     
     def _init_clients_for_read(self):
@@ -321,6 +324,10 @@ class NLPPackWorker:
                 f"media_type={stats.get('media_type')}, "
                 f"skipped_reason={skipped_reason if output.get('skipped') else 'none'}"
             )
+            
+            # Increment completed jobs counter
+            with self._jobs_lock:
+                self._jobs_processed += 1
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
             logger.error(f"Job {job_id} failed: {error_msg}")
@@ -335,9 +342,14 @@ class NLPPackWorker:
             return
 
         if NUM_WORKERS <= 1:
-            logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers=1)")
+            logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers=1, max_jobs={MAX_JOBS_PER_RESTART})")
             while True:
                 try:
+                    # Check if graceful restart needed
+                    if self._jobs_processed >= MAX_JOBS_PER_RESTART:
+                        logger.info(f"Reached max jobs ({MAX_JOBS_PER_RESTART}), gracefully restarting worker...")
+                        sys.exit(0)  # Exit cleanly, systemd/watchdog will restart
+                    
                     had_work = self.run_once()
                     if not had_work:
                         time.sleep(POLL_SECONDS)
@@ -349,11 +361,19 @@ class NLPPackWorker:
                     time.sleep(POLL_SECONDS)
             return
 
-        logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers={NUM_WORKERS})")
+        logger.info(f"Starting NLP Pack Worker daemon (poll every {POLL_SECONDS}s, workers={NUM_WORKERS}, max_jobs={MAX_JOBS_PER_RESTART})")
 
         with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
             while True:
                 try:
+                    # Check if graceful restart needed
+                    if self._jobs_processed >= MAX_JOBS_PER_RESTART:
+                        logger.info(f"Reached max jobs ({MAX_JOBS_PER_RESTART}), gracefully restarting worker...")
+                        logger.info("Waiting for active threads to complete...")
+                        executor.shutdown(wait=True)  # Wait for all threads to finish
+                        logger.info("All threads completed, exiting for restart")
+                        sys.exit(0)  # Exit cleanly, systemd/watchdog will restart
+                    
                     futures = [executor.submit(self.run_once) for _ in range(NUM_WORKERS)]
                     had_work = False
 
