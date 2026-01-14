@@ -196,7 +196,12 @@ class NLPPackWorker:
         work_title = self.db.get_work_title(work_id)
         logger.info(f"Processing work: {work_title}")
         
-        model_output, model_stats = self.qwen.process_text(source_text, media_type, work_title)
+        model_output, model_stats = self.qwen.process_text(
+            source_text, 
+            media_type, 
+            work_title,
+            max_tokens=20000
+        )
         if not model_output:
             raise ValueError("Model processing failed to produce valid output")
         

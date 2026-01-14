@@ -15,7 +15,7 @@ from .utils import get_logger
 
 logger = get_logger(__name__)
 
-MODEL_TIMEOUT = int(os.environ.get('MODEL_TIMEOUT_SECONDS', '180'))
+MODEL_TIMEOUT = int(os.environ.get('MODEL_TIMEOUT_SECONDS', '360'))
 MODEL_MAX_RETRIES = int(os.environ.get('MODEL_MAX_RETRIES', '2'))
 
 
