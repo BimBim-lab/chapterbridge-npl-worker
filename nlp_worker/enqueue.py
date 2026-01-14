@@ -65,7 +65,7 @@ def get_segments_missing_nlp(
                 has_raw_asset = False
                 for asset in segment_assets:
                     asset_type = asset.get('assets', {}).get('asset_type', '')
-                    if row_media_type == 'novel' and asset_type == 'raw_html':
+                    if row_media_type == 'novel' and asset_type in ('raw_html', 'cleaned_text'):
                         has_raw_asset = True
                         break
                     if row_media_type == 'manhwa' and asset_type == 'raw_image':
