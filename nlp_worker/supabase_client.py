@@ -28,13 +28,11 @@ class SupabaseClient:
             http2=False  # Force HTTP/1.1 to avoid HTTP/2 connection issues
         )
         
-        self.client: Client = create_client(
-            url, 
-            key,
-            options={
-                'client': http_client
-            }
-        )
+        # Pass http_client directly - supabase will use it internally
+        self.client: Client = create_client(url, key)
+        # Replace the internal httpx client
+        self.client.postgrest.session = http_client
+        
         self.max_retries = max_retries
         logger.info("Supabase client initialized with connection limits")
     
