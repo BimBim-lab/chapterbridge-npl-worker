@@ -1,4 +1,4 @@
-"""Character merge logic for novel segments with improved alias matching and deduplication."""
+"""Character merge logic for novel segments with profile-based descriptions."""
 
 import re
 import unicodedata
@@ -6,11 +6,6 @@ from typing import List, Dict, Any, Optional, Set
 from .utils import get_logger
 
 logger = get_logger(__name__)
-
-BOILERPLATE_DESCRIPTIONS = {
-    'unknown', 'n/a', 'none', 'no description', 'to be determined',
-    'main character', 'protagonist', 'antagonist', 'supporting character'
-}
 
 
 def normalize_text(text: str) -> str:
@@ -31,6 +26,76 @@ def normalize_alias(alias: str) -> str:
     normalized = normalize_text(alias)
     normalized = re.sub(r"['\"]", "", normalized)
     return normalized.strip()
+
+
+def generate_character_description(profile: Dict[str, str], name: str = "") -> str:
+    """
+    Generate 2-4 sentence character description from profile.
+    
+    Args:
+        profile: Character profile dict with fields
+        name: Character name for context
+    
+    Returns:
+        Formatted description string (2-4 sentences)
+    """
+    if not profile or not isinstance(profile, dict):
+        return ""
+    
+    sentences = []
+    
+    # Sentence 1: Role + occupation/rank (core identity)
+    role = profile.get('role_identity', '').strip()
+    occupation = profile.get('occupation_rank_status', '').strip()
+    
+    if role and occupation:
+        sentences.append(f"{name} adalah {role} dengan status {occupation}.")
+    elif role:
+        sentences.append(f"{name} adalah {role}.")
+    elif occupation:
+        sentences.append(f"{name} memiliki status {occupation}.")
+    
+    # Sentence 2: Ability + personality (core traits)
+    ability = profile.get('core_ability_or_skill', '').strip()
+    personality = profile.get('core_personality', '').strip()
+    
+    if ability and personality:
+        sentences.append(f"Memiliki kemampuan {ability} dengan kepribadian {personality}.")
+    elif ability:
+        sentences.append(f"Memiliki kemampuan {ability}.")
+    elif personality:
+        sentences.append(f"Kepribadian {personality}.")
+    
+    # Sentence 3: Goal/motivation (optional but important)
+    goal = profile.get('motivation_or_goal', '').strip()
+    if goal:
+        sentences.append(f"Tujuannya adalah {goal}.")
+    
+    # Sentence 4: Notable extras (affiliation, appearance, backstory, secret)
+    extras = []
+    
+    affiliation = profile.get('affiliation', '').strip()
+    if affiliation:
+        extras.append(f"tergabung dalam {affiliation}")
+    
+    appearance = profile.get('distinctive_appearance', '').strip()
+    if appearance:
+        extras.append(f"{appearance}")
+    
+    backstory = profile.get('backstory_hook', '').strip()
+    if backstory:
+        extras.append(backstory)
+    
+    secret = profile.get('notable_constraint_or_secret', '').strip()
+    if secret:
+        extras.append(secret)
+    
+    if extras:
+        sentences.append(f"{', '.join(extras[:2])}.")  # Max 2 extras to keep it concise
+    
+    # Combine into 2-4 sentences
+    description = " ".join(sentences[:4])  # Cap at 4 sentences
+    return description if description else ""
 
 
 def find_existing_character(
@@ -231,12 +296,26 @@ def process_character_updates(
     for char_update in character_updates:
         name = (char_update.get('name') or '').strip()
         if not name:
+            logger.debug("Skipping character with empty name")
             stats['skipped'] += 1
             continue
         
         aliases = char_update.get('aliases') or []
-        facts = char_update.get('character_facts') or []
-        description = (char_update.get('description') or '').strip()
+        profile = char_update.get('profile') or {}
+        
+        # Generate description from profile
+        description = generate_character_description(profile, name)
+        
+        # Convert profile to character_facts format for storage
+        profile_facts = []
+        for field, value in profile.items():
+            if value and value.strip():
+                profile_facts.append({
+                    'field': field,
+                    'value': value.strip(),
+                    'segment': segment_number,
+                    'source': source_id
+                })
         
         existing = find_existing_character(work_characters, name, aliases)
         
@@ -246,48 +325,49 @@ def process_character_updates(
                 aliases,
                 existing.get('name', '')
             )
-            merged_facts = merge_character_facts(
-                existing.get('character_facts', []),
-                facts,
-                segment_number,
-                source_id
-            )
             
-            new_description = existing.get('description', '')
-            if should_update_description(new_description, description):
-                new_description = description
+            # Merge profile facts with existing facts
+            existing_facts = existing.get('character_facts', [])
+            merged_facts = existing_facts[:]
+            
+            # Update or add profile fields
+            for new_fact in profile_facts:
+                # Find if field already exists
+                field_exists = False
+                for i, existing_fact in enumerate(merged_facts):
+                    if existing_fact.get('field') == new_fact['field']:
+                        # Update if newer or more complete
+                        if len(new_fact.get('value', '')) > len(existing_fact.get('value', '')):
+                            merged_facts[i] = new_fact
+                        field_exists = True
+                        break
+                
+                if not field_exists:
+                    merged_facts.append(new_fact)
             
             db_client.update_character(existing['id'], {
                 'aliases': merged_aliases,
                 'character_facts': merged_facts,
-                'description': new_description,
+                'description': description if description else existing.get('description', ''),
                 'model_version': model_version
             })
             
             existing['aliases'] = merged_aliases
             existing['character_facts'] = merged_facts
-            existing['description'] = new_description
+            if description:
+                existing['description'] = description
             
             stats['updated'] += 1
             logger.debug(f"Updated character: {name} (aliases: {len(merged_aliases)}, facts: {len(merged_facts)})")
         else:
-            formatted_facts = []
-            for fact in facts:
-                new_fact = dict(fact)
-                if 'chapter' not in new_fact and 'segment' not in new_fact:
-                    new_fact['segment'] = segment_number
-                if 'source' not in new_fact:
-                    new_fact['source'] = source_id
-                formatted_facts.append(new_fact)
-            
             clean_aliases = merge_aliases([], aliases, name)
             
             new_char = db_client.upsert_character(
                 work_id=work_id,
                 name=name,
                 aliases=clean_aliases,
-                character_facts=formatted_facts,
-                description=description if description not in BOILERPLATE_DESCRIPTIONS else '',
+                character_facts=profile_facts,
+                description=description,
                 model_version=model_version
             )
             

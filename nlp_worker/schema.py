@@ -110,21 +110,56 @@ class SegmentEntitiesModel(BaseModel):
         return data
 
 
-class CharacterFactModel(BaseModel):
-    """Character fact model."""
-    fact: str = ""
-    chapter: Optional[int] = None
-    segment: Optional[int] = None
-    source: Optional[str] = None
+class CharacterProfileModel(BaseModel):
+    """Character profile fields for structured extraction."""
+    role_identity: str = ""  # protagonist, antagonist, supporting, etc
+    occupation_rank_status: str = ""  # job, rank, social status
+    affiliation: str = ""  # guild, organization, family
+    core_ability_or_skill: str = ""  # main ability or skill
+    core_personality: str = ""  # 1-2 key traits
+    motivation_or_goal: str = ""  # main goal or motivation
+    key_relationship: str = ""  # most important relationship (optional)
+    distinctive_appearance: str = ""  # unique physical traits (optional)
+    backstory_hook: str = ""  # relevant backstory (optional)
+    notable_constraint_or_secret: str = ""  # constraints or secrets (optional)
 
 
 class CharacterUpdateModel(BaseModel):
     """Character update from model output."""
     name: str
     aliases: List[str] = Field(default_factory=list)
-    character_facts: List[Dict[str, Any]] = Field(default_factory=list)
-    description: str = ""
-
+    profile: Dict[str, str] = Field(default_factory=dict)  # CharacterProfileModel as dict
+    
+    @field_validator('name', mode='before')
+    @classmethod
+    def validate_name(cls, v):
+        """Ensure name is a proper character name, not generic terms."""
+        if not v or not isinstance(v, str):
+            return ""
+        
+        v = v.strip()
+        lower_v = v.lower()
+        
+        # Filter out generic/invalid names
+        invalid_names = [
+            'ayah', 'ibu', 'bapak', 'kakak', 'adik', 'anak', 'orang tua',
+            'pria', 'wanita', 'laki-laki', 'perempuan', 'orang',
+            'orang kekar', 'pria berbaju', 'wanita muda', 'pemuda',
+            'anak laki-laki', 'anak perempuan', 'gadis', 'bocah',
+            'he', 'she', 'they', 'person', 'man', 'woman', 'boy', 'girl',
+            'father', 'mother', 'brother', 'sister', 'parent', 'child',
+            'unknown', 'unnamed', 'none', 'n/a'
+        ]
+        
+        if lower_v in invalid_names:
+            return ""
+        
+        # Must have at least 2 characters and not be all numbers
+        if len(v) < 2 or v.isdigit():
+            return ""
+        
+        return v
+    
     @field_validator('aliases', mode='before')
     @classmethod
     def ensure_aliases_list(cls, v):
@@ -133,13 +168,15 @@ class CharacterUpdateModel(BaseModel):
         if isinstance(v, str):
             return [v]
         return list(v) if v else []
-
-    @field_validator('character_facts', mode='before')
+    
+    @field_validator('profile', mode='before')
     @classmethod
-    def ensure_facts_list(cls, v):
+    def ensure_profile_dict(cls, v):
         if v is None:
-            return []
-        return list(v) if v else []
+            return {}
+        if isinstance(v, dict):
+            return v
+        return {}
 
 
 class NLPOutputModel(BaseModel):
@@ -259,12 +296,25 @@ def get_vllm_guided_json_schema() -> Dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["name"],
+                    "required": ["name", "profile"],
                     "properties": {
                         "name": {"type": "string"},
                         "aliases": {"type": "array", "items": {"type": "string"}},
-                        "character_facts": {"type": "array", "items": {"type": "object"}},
-                        "description": {"type": "string"}
+                        "profile": {
+                            "type": "object",
+                            "properties": {
+                                "role_identity": {"type": "string"},
+                                "occupation_rank_status": {"type": "string"},
+                                "affiliation": {"type": "string"},
+                                "core_ability_or_skill": {"type": "string"},
+                                "core_personality": {"type": "string"},
+                                "motivation_or_goal": {"type": "string"},
+                                "key_relationship": {"type": "string"},
+                                "distinctive_appearance": {"type": "string"},
+                                "backstory_hook": {"type": "string"},
+                                "notable_constraint_or_secret": {"type": "string"}
+                            }
+                        }
                     }
                 }
             }

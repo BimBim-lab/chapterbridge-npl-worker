@@ -25,28 +25,55 @@ def build_system_prompt(media_type: str) -> str:
     char_example = ""
     if media_type == 'novel':
         char_instruction = """
-- character_updates: REQUIRED array of character objects. For EACH character that appears or is mentioned:
-  * name: canonical name (REQUIRED)
+- character_updates: REQUIRED array of character profile objects. For EACH **NAMED** character (with proper name, NOT generic terms):
+  * name: REAL character name ONLY (e.g., "Arthur Lewyn", "Jin-Woo"). NEVER use generic terms like "ayah", "ibu", "pria", "wanita", "orang kekar", "father", "mother", "man", "woman", "person", etc.
   * aliases: array of alternate names/nicknames (empty array if none)
-  * character_facts: array of facts learned about this character in THIS chapter (empty array if none)
-  * description: brief appearance/personality note if revealed (empty string if none)
+  * profile: object with character details:
+    - role_identity: role in story (protagonist/antagonist/supporting/love interest/mentor/villain/comic relief)
+    - occupation_rank_status: job/rank/social status if mentioned (e.g., "hunter E-rank", "dokter", "putri kerajaan", "mahasiswa")
+    - affiliation: organization/guild/family if mentioned (e.g., "Guild X", "Keluarga Y")
+    - core_ability_or_skill: main ability or skill (e.g., "sistem level-up", "ahli pedang", "hacker", "jago memasak")
+    - core_personality: 1-2 clear traits (e.g., "pendiam", "keras kepala", "protektif", "cerdas")
+    - motivation_or_goal: main goal if stated (e.g., "ingin menyelamatkan keluarga", "balas dendam")
+    - key_relationship: most important relationship (optional, e.g., "rekan setim A", "saingan B")
+    - distinctive_appearance: unique physical trait if mentioned (optional, e.g., "berambut putih", "mata heterokromia")
+    - backstory_hook: relevant backstory if revealed (optional, e.g., "berasal dari keluarga miskin")
+    - notable_constraint_or_secret: constraint/secret if revealed (optional, e.g., "menyembunyikan identitas")
   
-  Include ALL named characters that appear, even if no new facts are learned."""
+  CRITICAL: Only include characters with REAL PROPER NAMES. Skip anyone referred to only by generic terms."""
         char_example = """
   "character_updates": [
     {
       "name": "Sung Jinwoo",
       "aliases": ["Jinwoo", "Jin-Woo"],
-      "character_facts": [
-        {"fact": "Entered a C-rank dungeon", "chapter": 3}
-      ],
-      "description": "E-rank hunter, weak but determined"
+      "profile": {
+        "role_identity": "protagonist",
+        "occupation_rank_status": "hunter E-rank",
+        "affiliation": "",
+        "core_ability_or_skill": "memiliki sistem level-up",
+        "core_personality": "pendiam, tekun",
+        "motivation_or_goal": "ingin menjadi lebih kuat",
+        "key_relationship": "",
+        "distinctive_appearance": "",
+        "backstory_hook": "pernah hunter terlemah",
+        "notable_constraint_or_secret": ""
+      }
     },
     {
       "name": "Yoo Jinho",
       "aliases": ["Jinho"],
-      "character_facts": [],
-      "description": ""
+      "profile": {
+        "role_identity": "supporting",
+        "occupation_rank_status": "hunter D-rank",
+        "affiliation": "",
+        "core_ability_or_skill": "tank",
+        "core_personality": "setia, pemalu",
+        "motivation_or_goal": "",
+        "key_relationship": "rekan setim Jinwoo",
+        "distinctive_appearance": "",
+        "backstory_hook": "",
+        "notable_constraint_or_secret": ""
+      }
     }
   ]"""
     else:
@@ -81,7 +108,8 @@ EXAMPLE OUTPUT STRUCTURE:
 
 CRITICAL RULES:
 - All segment_entities fields MUST be arrays. Use empty array [] if no entities found.
-- For novels: character_updates MUST be an array of character objects (include all named characters).
+- For novels: character_updates MUST only include characters with REAL PROPER NAMES (not "ayah", "pria", "orang", etc).
+- Empty string "" for any profile field that is not explicitly mentioned in the text.
 - OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
 
 
