@@ -22,15 +22,36 @@ MODEL_MAX_RETRIES = int(os.environ.get('MODEL_MAX_RETRIES', '2'))
 def build_system_prompt(media_type: str) -> str:
     """Build the system prompt for NLP processing."""
     char_instruction = ""
+    char_example = ""
     if media_type == 'novel':
         char_instruction = """
-- character_updates: For each significant character, provide:
-  - name: canonical name
-  - aliases: list of alternate names/titles used
-  - character_facts: list of facts learned in this chapter with chapter reference
-  - description: brief physical/personality description if available"""
+- character_updates: REQUIRED array of character objects. For EACH character that appears or is mentioned:
+  * name: canonical name (REQUIRED)
+  * aliases: array of alternate names/nicknames (empty array if none)
+  * character_facts: array of facts learned about this character in THIS chapter (empty array if none)
+  * description: brief appearance/personality note if revealed (empty string if none)
+  
+  Include ALL named characters that appear, even if no new facts are learned."""
+        char_example = """
+  "character_updates": [
+    {
+      "name": "Sung Jinwoo",
+      "aliases": ["Jinwoo", "Jin-Woo"],
+      "character_facts": [
+        {"fact": "Entered a C-rank dungeon", "chapter": 3}
+      ],
+      "description": "E-rank hunter, weak but determined"
+    },
+    {
+      "name": "Yoo Jinho",
+      "aliases": ["Jinho"],
+      "character_facts": [],
+      "description": ""
+    }
+  ]"""
     else:
-        char_instruction = "- character_updates: Return empty array (not applicable for this media type)"
+        char_instruction = "- character_updates: Return empty array [] (not applicable for this media type)"
+        char_example = '  "character_updates": []'
 
     return f"""You are an expert NLP processor for story content analysis. Your task is to process raw text from stories and produce structured analysis output.
 
@@ -51,8 +72,17 @@ TASK: Analyze the provided story text and output a JSON object with the followin
 3. **character_updates** (media_type: {media_type}):
 {char_instruction}
 
-CRITICAL: All fields in segment_entities MUST be arrays. Use empty array [] if no entities found.
-OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
+EXAMPLE OUTPUT STRUCTURE:
+{{
+  "segment_summary": {{...}},
+  "segment_entities": {{...}},
+{char_example}
+}}
+
+CRITICAL RULES:
+- All segment_entities fields MUST be arrays. Use empty array [] if no entities found.
+- For novels: character_updates MUST be an array of character objects (include all named characters).
+- OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
 
 
 def build_user_prompt(source_text: str, media_type: str) -> str:
