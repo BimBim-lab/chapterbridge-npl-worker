@@ -79,9 +79,13 @@ class NLPPackWorker:
             return text, stats
         
         elif media_type == 'novel':
+            # Try raw_html first, then cleaned_text as fallback
             assets = self.db.get_segment_assets(segment_id, 'raw_html')
             if not assets:
-                logger.error(f"No raw_html asset found for segment {segment_id}")
+                assets = self.db.get_segment_assets(segment_id, 'cleaned_text')
+            
+            if not assets:
+                logger.error(f"No raw_html or cleaned_text asset found for segment {segment_id}")
                 return None, stats
             
             asset = assets[0]
