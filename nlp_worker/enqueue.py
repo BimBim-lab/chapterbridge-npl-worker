@@ -18,7 +18,6 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
     Find segments that are missing any NLP outputs using efficient batch query.
     
     Checks for missing:
-    - cleaned_text asset
     - segment_summaries row
     - segment_entities row
     """
@@ -32,16 +31,13 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
         e.media_type,
         e.work_id,
         e.id as edition_id,
-        CASE WHEN a.id IS NOT NULL THEN true ELSE false END as has_cleaned,
         CASE WHEN ss.segment_id IS NOT NULL THEN true ELSE false END as has_summary,
         CASE WHEN se.segment_id IS NOT NULL THEN true ELSE false END as has_entities
     FROM segments s
     JOIN editions e ON s.edition_id = e.id
-    LEFT JOIN segment_assets sa ON sa.segment_id = s.id
-    LEFT JOIN assets a ON sa.asset_id = a.id AND a.asset_type = 'cleaned_text'
     LEFT JOIN segment_summaries ss ON ss.segment_id = s.id
     LEFT JOIN segment_entities se ON se.segment_id = s.id
-    WHERE a.id IS NULL OR ss.segment_id IS NULL OR se.segment_id IS NULL
+    WHERE ss.segment_id IS NULL OR se.segment_id IS NULL
     ORDER BY e.work_id, s.number
     """
     
@@ -65,10 +61,6 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
             number,
             title,
             editions!inner(id, work_id, media_type),
-            segment_assets!left(
-                asset_id,
-                assets!inner(id, asset_type)
-            ),
             segment_summaries!left(segment_id),
             segment_entities!left(segment_id)
             '''
@@ -104,15 +96,11 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
                 continue
             
             # Check if outputs exist
-            has_cleaned = any(
-                asset.get('assets', {}).get('asset_type') == 'cleaned_text' 
-                for asset in segment_assets
-            )
             has_summary = len(row.get('segment_summaries') or []) > 0
             has_entities = len(row.get('segment_entities') or []) > 0
             
             # Only include if missing any output
-            if not (has_cleaned and has_summary and has_entities):
+            if not (has_summary and has_entities):
                 segments.append({
                     'segment_id': row['id'],
                     'segment_type': row['segment_type'],
@@ -121,7 +109,6 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
                     'media_type': media_type,
                     'work_id': row['editions']['work_id'],
                     'edition_id': row['editions']['id'],
-                    'has_cleaned': has_cleaned,
                     'has_summary': has_summary,
                     'has_entities': has_entities
                 })

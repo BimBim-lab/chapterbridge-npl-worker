@@ -36,14 +36,7 @@ def build_system_prompt(media_type: str) -> str:
 
 TASK: Analyze the provided story text and output a JSON object with the following structure:
 
-1. **cleaned_text**: Clean the input text by:
-   - Removing watermarks, credits, and boilerplate
-   - Fixing spacing and punctuation issues
-   - Removing duplicate lines
-   - Keeping all story content in correct reading order
-   - Do NOT summarize - preserve the full narrative text
-
-2. **segment_summary**: Analyze the narrative:
+1. **segment_summary**: Analyze the narrative:
    - summary: Detailed factual summary of events (2-4 paragraphs)
    - summary_short: 1-2 sentence headline
    - events: Chronological bullet list of key events (array of strings)
@@ -51,11 +44,11 @@ TASK: Analyze the provided story text and output a JSON object with the followin
    - key_dialogue: Important quotes (array of objects with speaker, text, optional to and importance)
    - tone: Object with primary (string), secondary (array of strings), and intensity (0-1 number)
 
-3. **segment_entities**: Extract all entities. EVERY field MUST be an array (never null):
+2. **segment_entities**: Extract all entities. EVERY field MUST be an array (never null):
    - characters, locations, items, time_refs, organizations, factions, titles_ranks,
    - skills, creatures, concepts, relationships, emotions, keywords
 
-4. **character_updates** (media_type: {media_type}):
+3. **character_updates** (media_type: {media_type}):
 {char_instruction}
 
 CRITICAL: All fields in segment_entities MUST be arrays. Use empty array [] if no entities found.
@@ -265,7 +258,7 @@ class QwenClient:
                 except Exception:
                     pass
             
-            if not stats['repair_succeeded'] and not normalized.get('cleaned_text'):
+            if not stats['repair_succeeded']:
                 logger.error(f"Validation failed after repair: {error}")
                 return None, stats
         

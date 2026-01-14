@@ -144,7 +144,6 @@ class CharacterUpdateModel(BaseModel):
 
 class NLPOutputModel(BaseModel):
     """Complete NLP output model with normalization."""
-    cleaned_text: str = ""
     segment_summary: SegmentSummaryModel = Field(default_factory=SegmentSummaryModel)
     segment_entities: SegmentEntitiesModel = Field(default_factory=SegmentEntitiesModel)
     character_updates: List[CharacterUpdateModel] = Field(default_factory=list)
@@ -160,13 +159,11 @@ class NLPOutputModel(BaseModel):
     @classmethod
     def ensure_required_fields(cls, data):
         if not isinstance(data, dict):
-            return {'cleaned_text': '', 'segment_summary': {}, 'segment_entities': {}}
+            return {'segment_summary': {}, 'segment_entities': {}}
         if 'segment_summary' not in data or data['segment_summary'] is None:
             data['segment_summary'] = {}
         if 'segment_entities' not in data or data['segment_entities'] is None:
             data['segment_entities'] = {}
-        if 'cleaned_text' not in data or data['cleaned_text'] is None:
-            data['cleaned_text'] = ''
         return data
 
 
@@ -199,8 +196,6 @@ def validate_and_normalize(raw_output: Dict[str, Any]) -> tuple[bool, Dict[str, 
         model = NLPOutputModel.model_validate(raw_output)
         normalized = model.model_dump()
         
-        if not normalized.get('cleaned_text'):
-            return False, normalized, "cleaned_text is empty"
         if not normalized.get('segment_summary', {}).get('summary'):
             return False, normalized, "summary is empty"
         
@@ -214,9 +209,8 @@ def get_vllm_guided_json_schema() -> Dict[str, Any]:
     """Get the JSON schema for vLLM guided generation."""
     return {
         "type": "object",
-        "required": ["cleaned_text", "segment_summary", "segment_entities"],
+        "required": ["segment_summary", "segment_entities"],
         "properties": {
-            "cleaned_text": {"type": "string"},
             "segment_summary": {
                 "type": "object",
                 "required": ["summary", "summary_short", "events", "beats", "key_dialogue", "tone"],

@@ -15,7 +15,6 @@ from .utils import get_logger, count_paragraphs, count_subtitle_blocks
 from .supabase_client import get_supabase_client, SupabaseClient
 from .r2_client import get_r2_client, R2Client
 from .qwen_client import get_qwen_client, QwenClient
-from .key_builder import build_key_from_segment
 from .character_merge import process_character_updates
 from .text_extractors import extract_subtitle_text, extract_novel_text, extract_manhwa_text
 
@@ -108,20 +107,15 @@ class NLPPackWorker:
     
     def check_existing_outputs(
         self,
-        segment_id: str,
-        cleaned_r2_key: str
+        segment_id: str
     ) -> Dict[str, bool]:
         """Check which outputs already exist."""
         self._init_clients_for_read()
         
         existing = {
-            'cleaned_text': False,
             'segment_summaries': False,
             'segment_entities': False
         }
-        
-        if self.db.get_asset_by_r2_key(cleaned_r2_key):
-            existing['cleaned_text'] = True
         
         if self.db.get_segment_summary(segment_id):
             existing['segment_summaries'] = True
@@ -131,36 +125,6 @@ class NLPPackWorker:
         
         return existing
     
-    def write_cleaned_text(
-        self,
-        cleaned_text: str,
-        r2_key: str,
-        segment_id: str,
-        bucket: str
-    ) -> Dict[str, Any]:
-        """Write cleaned text to R2 and create asset record."""
-        if self.dry_run:
-            logger.info(f"[DRY RUN] Would write cleaned text to {r2_key}")
-            return {'asset_id': 'dry-run', 'r2_key': r2_key, 'bytes': len(cleaned_text.encode())}
-        
-        upload_result = self.r2.upload_text(r2_key, cleaned_text)
-        
-        asset = self.db.insert_asset(
-            r2_key=r2_key,
-            asset_type='cleaned_text',
-            content_type='text/plain; charset=utf-8',
-            bytes_size=upload_result['bytes'],
-            sha256=upload_result['sha256'],
-            bucket=bucket
-        )
-        
-        self.db.link_segment_asset(segment_id, asset['id'], role='cleaned_text')
-        
-        return {
-            'asset_id': asset['id'],
-            'r2_key': r2_key,
-            'bytes': upload_result['bytes']
-        }
     
     def process_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -189,14 +153,11 @@ class NLPPackWorker:
         
         logger.info(f"Segment {segment_id}: {media_type} {segment_type}-{segment_number}, work={work_id}")
         
-        cleaned_r2_key = build_key_from_segment(segment, edition)
-        
-        existing = self.check_existing_outputs(segment_id, cleaned_r2_key)
+        existing = self.check_existing_outputs(segment_id)
         all_exist = all(existing.values())
         
         output_result = {
             'model_version': MODEL_VERSION,
-            'cleaned_r2_key': cleaned_r2_key,
             'stats': {
                 'media_type': media_type,
                 'segment_type': segment_type,
@@ -226,24 +187,6 @@ class NLPPackWorker:
         
         output_result['stats'].update(model_stats)
         output_result['upserted'] = True
-        
-        if not existing['cleaned_text'] or force:
-            if self.dry_run:
-                logger.info(f"[DRY RUN] Would write cleaned text ({len(model_output['cleaned_text'])} chars)")
-                output_result['cleaned_bytes'] = len(model_output['cleaned_text'].encode())
-            else:
-                cleaned_result = self.write_cleaned_text(
-                    model_output['cleaned_text'],
-                    cleaned_r2_key,
-                    segment_id,
-                    self.r2.bucket
-                )
-                output_result['cleaned_asset_id'] = cleaned_result['asset_id']
-                output_result['cleaned_bytes'] = cleaned_result['bytes']
-            logger.info(f"Wrote cleaned text: {cleaned_r2_key}")
-        else:
-            logger.info("Cleaned text already exists, skipped write")
-            output_result['cleaned_text_skipped'] = True
         
         if not existing['segment_summaries'] or force:
             if self.dry_run:
@@ -356,7 +299,6 @@ class NLPPackWorker:
             logger.info(
                 f"Job {job_id} completed: segment_id={segment_id}, "
                 f"media_type={stats.get('media_type')}, "
-                f"output_r2_key={output.get('cleaned_r2_key')}, "
                 f"skipped_reason={skipped_reason if output.get('skipped') else 'none'}"
             )
         except Exception as e:
@@ -408,7 +350,6 @@ def run_dry_run(segment_id: str):
         stats = result.get('stats', {})
         print(f"\nMedia Type: {stats.get('media_type')}")
         print(f"Segment: {stats.get('segment_type')}-{stats.get('segment_number')}")
-        print(f"R2 Key: {result.get('cleaned_r2_key')}")
         
         print(f"\nInput Stats:")
         print(f"  - Input chars: {stats.get('input_chars', 0):,}")
