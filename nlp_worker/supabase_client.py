@@ -1,9 +1,11 @@
 """Supabase database client and helpers."""
 
 import os
+import time
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from supabase import create_client, Client
+import httpx
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -11,15 +13,47 @@ logger = get_logger(__name__)
 class SupabaseClient:
     """Client for interacting with Supabase database."""
     
-    def __init__(self):
+    def __init__(self, max_retries: int = 3):
         url = os.environ.get('SUPABASE_URL')
         key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
         
         if not url or not key:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
         
-        self.client: Client = create_client(url, key)
-        logger.info("Supabase client initialized")
+        # Configure httpx client with connection limits and shorter timeouts
+        # This prevents connection pool exhaustion and stale connections
+        http_client = httpx.Client(
+            timeout=httpx.Timeout(30.0, connect=10.0),  # 30s timeout, 10s connect
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            http2=False  # Force HTTP/1.1 to avoid HTTP/2 connection issues
+        )
+        
+        self.client: Client = create_client(
+            url, 
+            key,
+            options={
+                'client': http_client
+            }
+        )
+        self.max_retries = max_retries
+        logger.info("Supabase client initialized with connection limits")
+    
+    def _execute_with_retry(self, func, *args, **kwargs):
+        """Execute a function with retry logic for connection errors."""
+        last_error = None
+        for attempt in range(self.max_retries):
+            try:
+                return func(*args, **kwargs)
+            except (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError) as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    logger.warning(f"Connection error (attempt {attempt + 1}/{self.max_retries}): {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"All retry attempts failed: {e}")
+                    raise
+        raise last_error
     
     def poll_next_job(self, job_type: str = 'summarize', task: str = 'nlp_pack_v1') -> Optional[Dict]:
         """
@@ -98,25 +132,27 @@ class SupabaseClient:
     
     def get_segment_with_edition(self, segment_id: str) -> Optional[Dict]:
         """Get segment with edition info."""
-        result = self.client.table('segments') \
-            .select('*, editions!inner(id, work_id, media_type)') \
-            .eq('id', segment_id) \
-            .limit(1) \
-            .execute()
+        def _fetch():
+            result = self.client.table('segments') \
+                .select('*, editions!inner(id, work_id, media_type)') \
+                .eq('id', segment_id) \
+                .limit(1) \
+                .execute()
+            return result.data[0] if result.data and len(result.data) > 0 else None
         
-        if result.data and len(result.data) > 0:
-            return result.data[0]
-        return None
+        return self._execute_with_retry(_fetch)
     
     def get_segment_assets(self, segment_id: str, asset_type: str) -> List[Dict]:
         """Get assets linked to a segment by type."""
-        result = self.client.table('segment_assets') \
-            .select('asset_id, assets!inner(*)') \
-            .eq('segment_id', segment_id) \
-            .eq('assets.asset_type', asset_type) \
-            .execute()
+        def _fetch():
+            result = self.client.table('segment_assets') \
+                .select('asset_id, assets!inner(*)') \
+                .eq('segment_id', segment_id) \
+                .eq('assets.asset_type', asset_type) \
+                .execute()
+            return [row['assets'] for row in result.data] if result.data else []
         
-        return [row['assets'] for row in result.data] if result.data else []
+        return self._execute_with_retry(_fetch)
     
     def get_asset_by_r2_key(self, r2_key: str) -> Optional[Dict]:
         """Get asset by R2 key."""
