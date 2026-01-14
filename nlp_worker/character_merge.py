@@ -303,8 +303,8 @@ def process_character_updates(
         aliases = char_update.get('aliases') or []
         profile = char_update.get('profile') or {}
         
-        # Generate description from profile
-        description = generate_character_description(profile, name)
+        # Don't generate description - leave empty per user request
+        description = ""
         
         # Convert profile to character_facts format for storage
         profile_facts = []
@@ -348,14 +348,12 @@ def process_character_updates(
             db_client.update_character(existing['id'], {
                 'aliases': merged_aliases,
                 'character_facts': merged_facts,
-                'description': description if description else existing.get('description', ''),
+                'description': '',  # Keep empty
                 'model_version': model_version
             })
             
             existing['aliases'] = merged_aliases
             existing['character_facts'] = merged_facts
-            if description:
-                existing['description'] = description
             
             stats['updated'] += 1
             logger.debug(f"Updated character: {name} (aliases: {len(merged_aliases)}, facts: {len(merged_facts)})")
@@ -367,7 +365,7 @@ def process_character_updates(
                 name=name,
                 aliases=clean_aliases,
                 character_facts=profile_facts,
-                description=description,
+                description='',  # Keep empty per user request
                 model_version=model_version
             )
             

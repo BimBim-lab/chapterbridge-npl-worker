@@ -291,13 +291,8 @@ class SupabaseClient:
     ) -> Dict:
         """
         Upsert a character (novel only).
-        Uses manual check due to expression-based unique index on (work_id, LOWER(name)).
+        Uses manual check with retry due to expression-based unique index on (work_id, LOWER(name)).
         """
-        # Try to find existing character (case-insensitive name match)
-        existing = self.client.table('characters').select('*').eq(
-            'work_id', work_id
-        ).ilike('name', name).limit(1).execute()
-        
         data = {
             'work_id': work_id,
             'name': name,
@@ -307,15 +302,45 @@ class SupabaseClient:
             'model_version': model_version
         }
         
-        if existing.data:
-            # Update existing character
-            char_id = existing.data[0]['id']
-            result = self.client.table('characters').update(data).eq('id', char_id).execute()
-        else:
-            # Insert new character
-            result = self.client.table('characters').insert(data).execute()
+        # Try to find existing character (case-insensitive name match)
+        # Use exact filter to avoid race conditions
+        from postgrest.exceptions import APIError
         
-        return result.data[0] if result.data else None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                existing = self.client.table('characters').select('*').eq(
+                    'work_id', work_id
+                ).ilike('name', name).limit(1).execute()
+                
+                if existing.data:
+                    # Update existing character
+                    char_id = existing.data[0]['id']
+                    result = self.client.table('characters').update(data).eq('id', char_id).execute()
+                    return result.data[0] if result.data else None
+                else:
+                    # Insert new character
+                    result = self.client.table('characters').insert(data).execute()
+                    return result.data[0] if result.data else None
+                    
+            except APIError as e:
+                # Handle duplicate key error (race condition - character inserted by another worker)
+                if e.code == '23505' and attempt < max_retries - 1:
+                    logger.warning(f"Duplicate key for {name}, retrying... (attempt {attempt + 1})")
+                    continue
+                elif e.code == '23505':
+                    # Final retry: just fetch and update
+                    logger.warning(f"Duplicate key persists for {name}, fetching and updating")
+                    existing = self.client.table('characters').select('*').eq(
+                        'work_id', work_id
+                    ).ilike('name', name).limit(1).execute()
+                    if existing.data:
+                        char_id = existing.data[0]['id']
+                        result = self.client.table('characters').update(data).eq('id', char_id).execute()
+                        return result.data[0] if result.data else None
+                raise
+        
+        return None
     
     def update_character(self, char_id: str, updates: Dict) -> None:
         """Update an existing character."""
