@@ -112,21 +112,29 @@ EXAMPLE OUTPUT STRUCTURE:
 }}
 
 CRITICAL RULES:
+- ⚠️ ONLY extract information that is EXPLICITLY STATED in the provided text. DO NOT add information from your training data or other works.
 - All segment_entities fields MUST be arrays. Use empty array [] if no entities found.
 - For novels: character_updates MUST only include characters with REAL PROPER NAMES (not "ayah", "pria", "orang", etc).
+- Character names MUST appear in the provided text. DO NOT invent or import names from other stories.
 - Empty string "" for any profile field that is not explicitly mentioned in the text.
 - OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
 
 
-def build_user_prompt(source_text: str, media_type: str) -> str:
+def build_user_prompt(source_text: str, media_type: str, work_title: Optional[str] = None) -> str:
     """Build the user prompt with source text."""
-    return f"""Analyze this {media_type} content and produce the structured JSON output:
+    title_reminder = f" from '{work_title}'" if work_title else ""
+    return f"""Analyze this {media_type} content{title_reminder} and produce the structured JSON output.
+
+⚠️ IMPORTANT: ONLY extract information from the text below. DO NOT use external knowledge or reference other works.
 
 ---BEGIN CONTENT---
 {source_text}
 ---END CONTENT---
 
-Remember: Output ONLY valid JSON. All segment_entities fields must be arrays (use [] if empty)."""
+Remember: 
+- Extract ONLY from the content above
+- Output ONLY valid JSON
+- All segment_entities fields must be arrays (use [] if empty)"""
 
 
 class QwenClient:
@@ -181,7 +189,12 @@ class QwenClient:
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    response_format={"type": "json_object"}
+                    response_format={"type": "json_object"},
+                    # Disable KV cache reuse to prevent cross-contamination
+                    extra_body={
+                        "use_beam_search": False,
+                        "ignore_eos": False
+                    }
                     # Note: Disabled guided_json for now as it may cause issues with long texts
                     # extra_body={
                     #     "guided_json": guided_json,
@@ -267,7 +280,7 @@ class QwenClient:
         }
         
         system_prompt = build_system_prompt(media_type, work_title)
-        user_prompt = build_user_prompt(source_text, media_type)
+        user_prompt = build_user_prompt(source_text, media_type, work_title)
         
         messages = [
             {"role": "system", "content": system_prompt},
