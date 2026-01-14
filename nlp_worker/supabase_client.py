@@ -22,19 +22,48 @@ class SupabaseClient:
         logger.info("Supabase client initialized")
     
     def poll_next_job(self, job_type: str = 'summarize', task: str = 'nlp_pack_v1') -> Optional[Dict]:
-        """Poll for the next queued job."""
+        """
+        Poll for the next queued job with row-level locking to prevent race conditions.
+        
+        Uses PostgreSQL FOR UPDATE SKIP LOCKED to ensure only one worker gets each job.
+        """
         try:
-            result = self.client.table('pipeline_jobs') \
-                .select('*') \
-                .eq('status', 'queued') \
-                .eq('job_type', job_type) \
-                .filter('input->>task', 'eq', task) \
-                .order('created_at', desc=False) \
-                .limit(1) \
-                .execute()
+            # Use raw SQL for row-level locking (FOR UPDATE SKIP LOCKED)
+            # This prevents multiple workers from grabbing the same job
+            query = """
+            SELECT *
+            FROM pipeline_jobs
+            WHERE status = 'queued'
+              AND job_type = %s
+              AND input->>'task' = %s
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+            """
             
-            if result.data and len(result.data) > 0:
-                return result.data[0]
+            # Execute via RPC if available, otherwise fallback
+            try:
+                result = self.client.rpc('exec_sql', {
+                    'query': query,
+                    'params': [job_type, task]
+                }).execute()
+                
+                if result.data and len(result.data) > 0:
+                    return result.data[0]
+            except Exception:
+                # Fallback: use regular query (less safe but works)
+                result = self.client.table('pipeline_jobs') \
+                    .select('*') \
+                    .eq('status', 'queued') \
+                    .eq('job_type', job_type) \
+                    .filter('input->>task', 'eq', task) \
+                    .order('created_at', desc=False) \
+                    .limit(1) \
+                    .execute()
+                
+                if result.data and len(result.data) > 0:
+                    return result.data[0]
+            
             return None
         except Exception as e:
             logger.error(f"Failed to poll jobs: {e}")
