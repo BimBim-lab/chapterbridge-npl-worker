@@ -48,7 +48,7 @@ nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv
 echo "=============================================="
 
 # Launch vLLM server
-python -m vllm.entrypoints.openai.api_server \
+python3 -m vllm.entrypoints.openai.api_server \
     --model "${MODEL}" \
     --served-model-name "${SERVED_NAME}" \
     --host "${HOST}" \
