@@ -3,8 +3,7 @@
 import os
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-import httpx
-from supabase import create_client, Client, ClientOptions
+from supabase import create_client, Client
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -19,10 +18,7 @@ class SupabaseClient:
         if not url or not key:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
         
-        # Force HTTP/1.1 to avoid HTTP/2 disconnects from Supabase (httpcore.RemoteProtocolError)
-        http_client = httpx.Client(http2=False, timeout=httpx.Timeout(60.0, connect=30.0))
-        client_options = ClientOptions(http_client=http_client)
-        self.client: Client = create_client(url, key, options=client_options)
+        self.client: Client = create_client(url, key)
         logger.info("Supabase client initialized")
     
     def poll_next_job(self, job_type: str = 'summarize', task: str = 'nlp_pack_v1') -> Optional[Dict]:
