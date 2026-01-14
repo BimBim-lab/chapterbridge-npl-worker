@@ -23,8 +23,7 @@ def build_system_prompt(media_type: str, work_title: Optional[str] = None) -> st
     """Build the system prompt for NLP processing."""
     work_context = ""
     if work_title:
-        work_context = f"""\n\n=== WORK CONTEXT ===
-You are analyzing content from the work titled: \"{work_title}\"\nONLY extract information from THIS work. Ignore any previous context from other works.\n===================\n"""
+        work_context = f"""\n\n⚠️ WORK: "{work_title}" - Extract ONLY from the text below. NO external knowledge.\n"""
     
     char_instruction = ""
     char_example = ""
@@ -54,27 +53,10 @@ You are analyzing content from the work titled: \"{work_title}\"\nONLY extract i
   - Only include characters whose ACTUAL NAME is written in the text
   - If text says "the protagonist wakes up" but doesn't give a name, DO NOT extract
   - Wait for the name to be revealed before creating character entry"""
+        
+        # No concrete example to avoid model copying names
         char_example = """
-  "character_updates": [
-    {
-      "name": "Character Name Here",
-      "aliases": ["Nickname1", "Nickname2"],
-      "profile": {
-        "role_identity": "protagonist|antagonist|supporting|love interest|mentor|villain|comic relief",
-        "occupation_rank_status": "their job or rank if mentioned",
-        "affiliation": "guild/organization/family if mentioned",
-        "core_ability_or_skill": "main ability if mentioned",
-        "core_personality": "1-2 traits if described",
-        "motivation_or_goal": "goal if stated",
-        "key_relationship": "important relationship if mentioned",
-        "distinctive_appearance": "unique feature if described",
-        "backstory_hook": "background if revealed",
-        "notable_constraint_or_secret": "constraint/secret if mentioned"
-      }
-    }
-  ]
-  
-  IMPORTANT: Replace "Character Name Here" with ACTUAL names from the text. DO NOT use example names from other stories."""
+  "character_updates": [] // Add character objects here ONLY when actual names appear in text"""
     else:
         char_instruction = "- character_updates: Return empty array [] (not applicable for this media type)"
         char_example = '  "character_updates": []'
@@ -106,31 +88,22 @@ EXAMPLE OUTPUT STRUCTURE:
 }}
 
 CRITICAL RULES:
-- ⚠️ ONLY extract information that is EXPLICITLY STATED in the provided text. DO NOT add information from your training data or other works.
-- ⚠️ DO NOT use placeholder names from examples (like "Sung Jinwoo", "Yoo Jinho"). Use ACTUAL names from the text.
-- ⚠️ If the text only says "the protagonist" without a name, DO NOT extract that character. Wait until their actual name is revealed.
-- All segment_entities fields MUST be arrays. Use empty array [] if no entities found.
-- For novels: character_updates MUST only include characters with REAL PROPER NAMES (not "ayah", "pria", "orang", "the protagonist", etc).
-- Character names MUST appear in the provided text. DO NOT invent or import names from other stories.
-- Empty string "" for any profile field that is not explicitly mentioned in the text.
-- OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
+- ⚠️ Extract ONLY from the provided text. NO external knowledge, NO other stories.
+- ⚠️ Character names MUST be actual proper nouns from the text. NO "the protagonist", NO generic terms.
+- All segment_entities fields MUST be arrays (use [] if empty).
+- Empty string "" for profile fields not mentioned in text.
+- OUTPUT ONLY VALID JSON."""
 
 
 def build_user_prompt(source_text: str, media_type: str, work_title: Optional[str] = None) -> str:
     """Build the user prompt with source text."""
-    title_reminder = f" from '{work_title}'" if work_title else ""
-    return f"""Analyze this {media_type} content{title_reminder} and produce the structured JSON output.
-
-⚠️ IMPORTANT: ONLY extract information from the text below. DO NOT use external knowledge or reference other works.
+    return f"""Analyze this {media_type} content and output structured JSON.
 
 ---BEGIN CONTENT---
 {source_text}
 ---END CONTENT---
 
-Remember: 
-- Extract ONLY from the content above
-- Output ONLY valid JSON
-- All segment_entities fields must be arrays (use [] if empty)"""
+Extract ONLY from the content above. Output valid JSON only."""
 
 
 class QwenClient:
