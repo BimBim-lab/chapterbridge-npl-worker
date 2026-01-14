@@ -31,56 +31,50 @@ You are analyzing content from the work titled: \"{work_title}\"\nONLY extract i
     if media_type == 'novel':
         char_instruction = """
 - character_updates: REQUIRED array of character profile objects. For EACH **NAMED** character (with proper name, NOT generic terms):
-  * name: REAL character name ONLY (e.g., "Arthur Lewyn", "Jin-Woo"). NEVER use generic terms like "ayah", "ibu", "pria", "wanita", "orang kekar", "father", "mother", "man", "woman", "person", etc.
+  * name: REAL character name ONLY as it appears in the text (e.g., "Arthur Leywin", "Reynolds Leywin", "Alice Leywin"). 
+    ⚠️ NEVER use:
+      - Generic terms: "ayah", "ibu", "pria", "wanita", "orang kekar", "father", "mother", "man", "woman", "person"
+      - Role placeholders: "the protagonist", "the hero", "the main character", "the villain"
+      - Names from other stories you know
+    ⚠️ ONLY extract if the actual name (proper noun) is written in the text
   * aliases: array of alternate names/nicknames (empty array if none)
   * profile: object with character details:
-    - role_identity: role in story (protagonist/antagonist/supporting/love interest/mentor/villain/comic relief)
-    - occupation_rank_status: job/rank/social status if mentioned (e.g., "hunter E-rank", "dokter", "putri kerajaan", "mahasiswa")
-    - affiliation: organization/guild/family if mentioned (e.g., "Guild X", "Keluarga Y")
-    - core_ability_or_skill: main ability or skill (e.g., "sistem level-up", "ahli pedang", "hacker", "jago memasak")
-    - core_personality: 1-2 clear traits (e.g., "pendiam", "keras kepala", "protektif", "cerdas")
-    - motivation_or_goal: main goal if stated (e.g., "ingin menyelamatkan keluarga", "balas dendam")
-    - key_relationship: most important relationship (optional, e.g., "rekan setim A", "saingan B")
-    - distinctive_appearance: unique physical trait if mentioned (optional, e.g., "berambut putih", "mata heterokromia")
-    - backstory_hook: relevant backstory if revealed (optional, e.g., "berasal dari keluarga miskin")
-    - notable_constraint_or_secret: constraint/secret if revealed (optional, e.g., "menyembunyikan identitas")
+    - role_identity: role in story ONLY if clearly stated (protagonist/antagonist/supporting/love interest/mentor/villain/comic relief). Leave empty "" if not stated.
+    - occupation_rank_status: job/rank/social status ONLY if mentioned (e.g., "hunter E-rank", "doctor", "princess", "student")
+    - affiliation: organization/guild/family ONLY if mentioned (e.g., "Guild X", "Family Y")
+    - core_ability_or_skill: main ability or skill ONLY if mentioned (e.g., "magic healing", "swordsmanship", "hacking")
+    - core_personality: 1-2 clear traits ONLY if described (e.g., "quiet", "stubborn", "protective", "smart")
+    - motivation_or_goal: main goal ONLY if stated (e.g., "wants to save family", "seeks revenge")
+    - key_relationship: most important relationship ONLY if mentioned (optional, e.g., "teammate of X", "rival of Y", "parent of Z")
+    - distinctive_appearance: unique physical trait ONLY if described (optional, e.g., "white hair", "heterochromia eyes")
+    - backstory_hook: relevant backstory ONLY if revealed (optional, e.g., "from poor family", "former king")
+    - notable_constraint_or_secret: constraint/secret ONLY if revealed (optional, e.g., "hiding identity", "has illness")
   
-  CRITICAL: Only include characters with REAL PROPER NAMES. Skip anyone referred to only by generic terms."""
+  CRITICAL: 
+  - Only include characters whose ACTUAL NAME is written in the text
+  - If text says "the protagonist wakes up" but doesn't give a name, DO NOT extract
+  - Wait for the name to be revealed before creating character entry"""
         char_example = """
   "character_updates": [
     {
-      "name": "Sung Jinwoo",
-      "aliases": ["Jinwoo", "Jin-Woo"],
+      "name": "Character Name Here",
+      "aliases": ["Nickname1", "Nickname2"],
       "profile": {
-        "role_identity": "protagonist",
-        "occupation_rank_status": "hunter E-rank",
-        "affiliation": "",
-        "core_ability_or_skill": "memiliki sistem level-up",
-        "core_personality": "pendiam, tekun",
-        "motivation_or_goal": "ingin menjadi lebih kuat",
-        "key_relationship": "",
-        "distinctive_appearance": "",
-        "backstory_hook": "pernah hunter terlemah",
-        "notable_constraint_or_secret": ""
-      }
-    },
-    {
-      "name": "Yoo Jinho",
-      "aliases": ["Jinho"],
-      "profile": {
-        "role_identity": "supporting",
-        "occupation_rank_status": "hunter D-rank",
-        "affiliation": "",
-        "core_ability_or_skill": "tank",
-        "core_personality": "setia, pemalu",
-        "motivation_or_goal": "",
-        "key_relationship": "rekan setim Jinwoo",
-        "distinctive_appearance": "",
-        "backstory_hook": "",
-        "notable_constraint_or_secret": ""
+        "role_identity": "protagonist|antagonist|supporting|love interest|mentor|villain|comic relief",
+        "occupation_rank_status": "their job or rank if mentioned",
+        "affiliation": "guild/organization/family if mentioned",
+        "core_ability_or_skill": "main ability if mentioned",
+        "core_personality": "1-2 traits if described",
+        "motivation_or_goal": "goal if stated",
+        "key_relationship": "important relationship if mentioned",
+        "distinctive_appearance": "unique feature if described",
+        "backstory_hook": "background if revealed",
+        "notable_constraint_or_secret": "constraint/secret if mentioned"
       }
     }
-  ]"""
+  ]
+  
+  IMPORTANT: Replace "Character Name Here" with ACTUAL names from the text. DO NOT use example names from other stories."""
     else:
         char_instruction = "- character_updates: Return empty array [] (not applicable for this media type)"
         char_example = '  "character_updates": []'
@@ -113,8 +107,10 @@ EXAMPLE OUTPUT STRUCTURE:
 
 CRITICAL RULES:
 - ⚠️ ONLY extract information that is EXPLICITLY STATED in the provided text. DO NOT add information from your training data or other works.
+- ⚠️ DO NOT use placeholder names from examples (like "Sung Jinwoo", "Yoo Jinho"). Use ACTUAL names from the text.
+- ⚠️ If the text only says "the protagonist" without a name, DO NOT extract that character. Wait until their actual name is revealed.
 - All segment_entities fields MUST be arrays. Use empty array [] if no entities found.
-- For novels: character_updates MUST only include characters with REAL PROPER NAMES (not "ayah", "pria", "orang", etc).
+- For novels: character_updates MUST only include characters with REAL PROPER NAMES (not "ayah", "pria", "orang", "the protagonist", etc).
 - Character names MUST appear in the provided text. DO NOT invent or import names from other stories.
 - Empty string "" for any profile field that is not explicitly mentioned in the text.
 - OUTPUT ONLY VALID JSON. No markdown, no explanation, just the JSON object."""
