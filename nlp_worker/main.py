@@ -232,12 +232,16 @@ class NLPPackWorker:
         
         if media_type == 'novel':
             character_updates = model_output.get('character_updates', [])
+            logger.info(f"Character updates received from model: {len(character_updates)} updates")
+            
             if character_updates:
+                logger.info(f"Processing {len(character_updates)} character updates for work {work_id}")
                 if self.dry_run:
                     logger.info(f"[DRY RUN] Would process {len(character_updates)} character updates")
                     output_result['characters'] = {'would_process': len(character_updates)}
                 else:
                     work_characters = self.db.get_work_characters(work_id)
+                    logger.info(f"Fetched {len(work_characters)} existing characters for work {work_id}")
                     char_stats = process_character_updates(
                         work_id=work_id,
                         work_characters=work_characters,
@@ -248,7 +252,9 @@ class NLPPackWorker:
                         media_type=media_type
                     )
                     output_result['characters'] = char_stats
-                logger.info(f"Character updates: {output_result.get('characters')}")
+                logger.info(f"Character processing result: {output_result.get('characters')}")
+            else:
+                logger.info("No character updates returned from model for this segment")
         
         return output_result
     
