@@ -289,15 +289,31 @@ class SupabaseClient:
         description: str,
         model_version: str
     ) -> Dict:
-        """Upsert a character (novel only)."""
-        result = self.client.table('characters').upsert({
+        """
+        Upsert a character (novel only).
+        Uses manual check due to expression-based unique index on (work_id, LOWER(name)).
+        """
+        # Try to find existing character (case-insensitive name match)
+        existing = self.client.table('characters').select('*').eq(
+            'work_id', work_id
+        ).ilike('name', name).limit(1).execute()
+        
+        data = {
             'work_id': work_id,
             'name': name,
             'aliases': aliases,
             'character_facts': character_facts,
             'description': description or '',
             'model_version': model_version
-        }, on_conflict='work_id,name').execute()
+        }
+        
+        if existing.data:
+            # Update existing character
+            char_id = existing.data[0]['id']
+            result = self.client.table('characters').update(data).eq('id', char_id).execute()
+        else:
+            # Insert new character
+            result = self.client.table('characters').insert(data).execute()
         
         return result.data[0] if result.data else None
     
