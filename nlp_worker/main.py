@@ -421,6 +421,14 @@ def main():
         logger.error(f"Missing required environment variables: {missing}")
         sys.exit(1)
     
+    # Reset stale jobs from previous interrupted runs
+    db = get_supabase_client()
+    timeout_minutes = int(os.environ.get('JOB_TIMEOUT_MINUTES', '3'))
+    logger.info(f"Checking for stale running jobs (timeout: {timeout_minutes}min)...")
+    reset_count = db.reset_stale_jobs(timeout_minutes=timeout_minutes)
+    if reset_count > 0:
+        logger.info(f"Reset {reset_count} stale jobs from previous run")
+    
     worker = NLPPackWorker()
     worker.run_forever()
 

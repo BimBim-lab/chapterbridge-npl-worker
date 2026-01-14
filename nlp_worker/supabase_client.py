@@ -269,6 +269,72 @@ class SupabaseClient:
         }).execute()
         
         return result.data[0] if result.data else None
+    
+    def reset_stale_jobs(
+        self, 
+        job_type: str = 'summarize',
+        timeout_minutes: int = 3,
+        max_attempts: int = 3
+    ) -> int:
+        """
+        Reset stale running jobs that have been stuck for too long.
+        
+        This handles cases where:
+        - Pod was interrupted (interruptible instance)
+        - Worker crashed without marking job failed
+        - Network issues caused job to hang
+        
+        Args:
+            job_type: Job type to check (default: 'summarize')
+            timeout_minutes: Consider job stale if running longer than this
+            max_attempts: Maximum retry attempts before marking as permanently failed
+        
+        Returns:
+            Number of jobs reset
+        """
+        from datetime import datetime, timedelta
+        
+        cutoff_time = datetime.utcnow() - timedelta(minutes=timeout_minutes)
+        
+        # Find stale running jobs
+        result = self.client.table('pipeline_jobs') \
+            .select('id, segment_id, attempt, started_at') \
+            .eq('status', 'running') \
+            .eq('job_type', job_type) \
+            .lt('started_at', cutoff_time.isoformat()) \
+            .execute()
+        
+        if not result.data:
+            return 0
+        
+        reset_count = 0
+        for job in result.data:
+            job_id = job['id']
+            attempt = job.get('attempt', 0)
+            
+            if attempt >= max_attempts:
+                # Exceeded max retries, mark as permanently failed
+                self.client.table('pipeline_jobs').update({
+                    'status': 'failed',
+                    'finished_at': datetime.utcnow().isoformat(),
+                    'error': f'Job timeout after {timeout_minutes} minutes (interrupted/crashed). Max retries exceeded.'
+                }).eq('id', job_id).execute()
+                logger.warning(f"Job {job_id} marked as permanently failed (max retries exceeded)")
+            else:
+                # Reset to queued for retry
+                self.client.table('pipeline_jobs').update({
+                    'status': 'failed',
+                    'finished_at': datetime.utcnow().isoformat(),
+                    'error': f'Job timeout after {timeout_minutes} minutes (interrupted/crashed). Will retry.'
+                }).eq('id', job_id).execute()
+                logger.warning(f"Job {job_id} reset from stale running state (attempt {attempt}/{max_attempts})")
+            
+            reset_count += 1
+        
+        if reset_count > 0:
+            logger.info(f"Reset {reset_count} stale running jobs (timeout: {timeout_minutes}min)")
+        
+        return reset_count
 
 
 _supabase_client: Optional[SupabaseClient] = None
