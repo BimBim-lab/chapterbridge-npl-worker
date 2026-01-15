@@ -100,76 +100,30 @@ def generate_character_description(profile: Dict[str, str], name: str = "") -> s
 
 def find_existing_character(
     work_characters: List[Dict],
-    name: str,
-    aliases: List[str]
+    name: str
 ) -> Optional[Dict]:
     """
-    Find an existing character by name or alias match (case-insensitive).
-    
-    Checks:
-    1. Exact name match (normalized)
-    2. Any new alias matches existing name
-    3. Any new alias matches any existing alias
-    4. New name matches any existing alias
+    Find an existing character by name match (case-insensitive).
     
     Args:
         work_characters: List of existing character records
         name: The character name to find
-        aliases: List of aliases to check
     
     Returns:
         Matching character record or None
     """
     name_normalized = normalize_alias(name)
     
-    all_search_terms: Set[str] = {name_normalized}
-    for alias in aliases:
-        norm = normalize_alias(alias)
-        if norm:
-            all_search_terms.add(norm)
-    
     for char in work_characters:
         char_name_normalized = normalize_alias(char.get('name', ''))
         
-        if char_name_normalized in all_search_terms:
+        if char_name_normalized == name_normalized:
             return char
-        
-        existing_aliases = char.get('aliases', []) or []
-        for existing_alias in existing_aliases:
-            if normalize_alias(existing_alias) in all_search_terms:
-                return char
     
     return None
 
 
-def merge_aliases(existing: List[str], new: List[str], canonical_name: str = "") -> List[str]:
-    """
-    Merge alias lists with proper deduplication.
-    
-    - Dedupes by normalized form
-    - Preserves original casing of first occurrence
-    - Excludes the canonical name from aliases
-    """
-    seen_normalized: Set[str] = set()
-    result: List[str] = []
-    
-    canonical_norm = normalize_alias(canonical_name)
-    if canonical_norm:
-        seen_normalized.add(canonical_norm)
-    
-    for alias in (existing or []) + (new or []):
-        if not alias or not alias.strip():
-            continue
-        
-        normalized = normalize_alias(alias)
-        if not normalized:
-            continue
-        
-        if normalized not in seen_normalized:
-            seen_normalized.add(normalized)
-            result.append(alias.strip())
-    
-    return result
+# merge_aliases function removed - aliases column deprecated
 
 
 def normalize_fact_for_dedupe(fact: Dict) -> str:
@@ -302,12 +256,10 @@ def process_character_updates(
         if hasattr(char_update, 'name'):
             # CharacterUpdateModel instance
             name = (char_update.name or '').strip()
-            aliases = char_update.aliases or []
             facts = char_update.facts or []
         else:
             # Dict (backward compatibility)
             name = (char_update.get('name') or '').strip()
-            aliases = char_update.get('aliases') or []
             facts = char_update.get('facts') or []
         
         if not name:
@@ -328,38 +280,27 @@ def process_character_updates(
                     'source': source_id
                 })
         
-        existing = find_existing_character(work_characters, name, aliases)
+        existing = find_existing_character(work_characters, name)
         
         if existing:
-            merged_aliases = merge_aliases(
-                existing.get('aliases', []), 
-                aliases,
-                existing.get('name', '')
-            )
-            
             # Merge new facts with existing facts (simple append)
             existing_facts = existing.get('character_facts', [])
             merged_facts = existing_facts + new_facts
             
             db_client.update_character(existing['id'], {
-                'aliases': merged_aliases,
                 'character_facts': merged_facts,
                 'description': '',  # Keep empty
                 'model_version': model_version
             })
             
-            existing['aliases'] = merged_aliases
             existing['character_facts'] = merged_facts
             
             stats['updated'] += 1
-            logger.debug(f"Updated character: {name} (aliases: {len(merged_aliases)}, facts: {len(merged_facts)})")
+            logger.debug(f"Updated character: {name} (facts: {len(merged_facts)})")
         else:
-            clean_aliases = merge_aliases([], aliases, name)
-            
             new_char = db_client.upsert_character(
                 work_id=work_id,
                 name=name,
-                aliases=clean_aliases,
                 character_facts=new_facts,
                 description='',  # Keep empty per user request
                 model_version=model_version

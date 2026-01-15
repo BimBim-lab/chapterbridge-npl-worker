@@ -281,7 +281,6 @@ class SupabaseClient:
         self,
         work_id: str,
         name: str,
-        aliases: List[str],
         character_facts: List[Dict],
         description: str,
         model_version: str
@@ -293,7 +292,6 @@ class SupabaseClient:
         data = {
             'work_id': work_id,
             'name': name,
-            'aliases': aliases,
             'character_facts': character_facts,
             'description': description or '',
             'model_version': model_version
