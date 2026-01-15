@@ -28,11 +28,17 @@ class R2Client:
         if not all([self.endpoint, self.access_key, self.secret_key]):
             raise ValueError("R2 credentials not fully configured. Check R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         
+        # Fix SSL handshake issues with Cloudflare R2
+        import ssl
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         self.client = boto3.client(
             's3',
             endpoint_url=self.endpoint,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
+            verify=False,  # Disable SSL verification (RunPod SSL issues with R2)
             config=Config(
                 signature_version='s3v4',
                 retries={'max_attempts': self.max_retries, 'mode': 'adaptive'},
