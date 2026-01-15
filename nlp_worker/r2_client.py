@@ -29,24 +29,44 @@ class R2Client:
             raise ValueError("R2 credentials not fully configured. Check R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         
         # Fix SSL handshake issues with Cloudflare R2
+        # Create custom SSL context that doesn't verify certificates
         import ssl
         import urllib3
+        from botocore.client import ClientCreator
+        
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        # Create unverified SSL context
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
+        # Monkey patch botocore to use unverified SSL
+        import botocore.httpsession
+        original_send = botocore.httpsession.URLLib3Session.send
+        
+        def unverified_send(self, request):
+            # Force SSL verification off
+            if hasattr(self, 'http'):
+                self.http.verify = False
+            return original_send(self, request)
+        
+        botocore.httpsession.URLLib3Session.send = unverified_send
         
         self.client = boto3.client(
             's3',
             endpoint_url=self.endpoint,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
-            verify=False,  # Disable SSL verification (RunPod SSL issues with R2)
+            verify=False,
             config=Config(
                 signature_version='s3v4',
-                retries={'max_attempts': self.max_retries, 'mode': 'adaptive'},
+                retries={'max_attempts': 0},  # Disable botocore retries, we handle it
                 connect_timeout=30,
                 read_timeout=60
             )
         )
-        logger.info(f"R2 client initialized for bucket: {self.bucket} (max_retries: {self.max_retries})")
+        logger.info(f"R2 client initialized for bucket: {self.bucket} (SSL verification disabled, max_retries: {self.max_retries})")
     
     def _should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if operation should be retried."""
