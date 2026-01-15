@@ -194,31 +194,38 @@ CREATE INDEX idx_segment_entities_segment ON segment_entities(segment_id);
 -- Segment Embeddings (vector embeddings for similarity search)
 CREATE TABLE segment_embeddings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  segment_id UUID NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+  segment_id UUID NOT NULL UNIQUE REFERENCES segments(id) ON DELETE CASCADE,
   embedding_summary VECTOR(1536),
   embedding_events VECTOR(1536),
-  model_version TEXT NOT NULL DEFAULT 'v0',
+  embedding_entities VECTOR(1536),
+  embed_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+  embed_dim INTEGER NOT NULL DEFAULT 1536,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(segment_id)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_segment_embeddings_segment ON segment_embeddings(segment_id);
-CREATE INDEX idx_embedding_summary_ivff ON segment_embeddings 
-  USING ivfflat (embedding_summary vector_l2_ops) WITH (lists = 100);
+CREATE INDEX idx_segemb_summary_ivfflat ON segment_embeddings 
+  USING ivfflat (embedding_summary vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX idx_segemb_events_ivfflat ON segment_embeddings 
+  USING ivfflat (embedding_events vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX idx_segemb_entities_ivfflat ON segment_embeddings 
+  USING ivfflat (embedding_entities vector_cosine_ops) WITH (lists = 100);
 
 -- Segment Mappings (cross-edition alignment)
 CREATE TABLE segment_mappings (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   from_segment_id UUID NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
   to_edition_id UUID NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
-  to_segment_start NUMERIC NOT NULL,
-  to_segment_end NUMERIC NOT NULL,
-  confidence FLOAT NOT NULL,
-  evidence JSONB NOT NULL DEFAULT '[]',
+  to_segment_start INTEGER NOT NULL,
+  to_segment_end INTEGER NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0,
+  evidence JSONB NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'likely', 'verified', 'disputed')),
+  algorithm_version TEXT,
   created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_segment_mappings_range CHECK (to_segment_end >= to_segment_start),
   UNIQUE(from_segment_id, to_edition_id)
 );
 CREATE INDEX idx_segment_mappings_from ON segment_mappings(from_segment_id);
@@ -288,14 +295,6 @@ works.authors:
 [
   {"name": "Chugong", "role": "author"},
   {"name": "DUBU", "role": "artist"}
-]
-
-characters.aliases:
-[
-  "Sung Jin-Woo",
-  "성진우",
-  "Jinwoo",
-  "Shadow Monarch"
 ]
 
 characters.character_facts:
