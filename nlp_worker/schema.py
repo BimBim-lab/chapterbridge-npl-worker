@@ -61,7 +61,6 @@ class SegmentEntitiesModel(BaseModel):
 class CharacterUpdateModel(BaseModel):
     """Character update from model output."""
     name: str
-    aliases: List[str] = Field(default_factory=list)
     facts: List[str] = Field(default_factory=list)  # Simple array of fact strings
     
     @field_validator('name', mode='before')
@@ -93,15 +92,6 @@ class CharacterUpdateModel(BaseModel):
             return ""
         
         return v
-    
-    @field_validator('aliases', mode='before')
-    @classmethod
-    def ensure_aliases_list(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [v]
-        return list(v) if v else []
     
     @field_validator('facts', mode='before')
     @classmethod
@@ -217,10 +207,9 @@ def get_vllm_guided_json_schema() -> Dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["name", "aliases", "facts"],
+                    "required": ["name", "facts"],
                     "properties": {
                         "name": {"type": "string"},
-                        "aliases": {"type": "array", "items": {"type": "string"}},
                         "facts": {"type": "array", "items": {"type": "string"}}
                     }
                 }

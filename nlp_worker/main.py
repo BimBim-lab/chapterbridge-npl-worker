@@ -196,12 +196,7 @@ class NLPPackWorker:
         work_title = self.db.get_work_title(work_id)
         logger.info(f"Processing work: {work_title}")
         
-        model_output, model_stats = self.qwen.process_text(
-            source_text, 
-            media_type, 
-            work_title,
-            max_tokens=20000
-        )
+        model_output, model_stats = self.qwen.process_text(source_text, media_type, work_title)
         if not model_output:
             raise ValueError("Model processing failed to produce valid output")
         
@@ -218,6 +213,9 @@ class NLPPackWorker:
                     summary=summary_data.get('summary', ''),
                     summary_short=summary_data.get('summary_short', ''),
                     events=summary_data.get('events', []),
+                    beats=summary_data.get('beats', []),
+                    key_dialogue=summary_data.get('key_dialogue', []),
+                    tone=summary_data.get('tone', {}),
                     model_version=MODEL_VERSION
                 )
             output_result['summary_upserted'] = True

@@ -32,7 +32,6 @@ def build_system_prompt(media_type: str, work_title: Optional[str] = None) -> st
 - character_updates: Array of character objects. For EACH **NAMED** character:
   * name: Character's REAL NAME as written in text (e.g., "Arthur Leywin", "Alice Leywin")
     ⚠️ NEVER use generic terms ("ayah", "pria", "the protagonist") or names from other stories
-  * aliases: Array of alternate names/nicknames (empty array [] if none)
   * facts: Array of SHORT fact strings about this character extracted from THIS segment:
     - Role: "protagonist", "antagonist", "supporting", etc.
     - Occupation: "student", "hunter E-rank", "doctor", "princess"
@@ -49,7 +48,6 @@ def build_system_prompt(media_type: str, work_title: Optional[str] = None) -> st
   "character_updates": [
     {
       "name": "Arthur Leywin",
-      "aliases": ["Art"],
       "facts": [
         "protagonist",
         "reincarnated from another world",

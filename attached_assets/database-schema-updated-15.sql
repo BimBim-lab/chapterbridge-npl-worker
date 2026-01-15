@@ -63,7 +63,6 @@ CREATE TABLE characters (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   work_id UUID NOT NULL REFERENCES works(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
-  aliases JSONB NOT NULL DEFAULT '[]',
   character_facts JSONB NOT NULL DEFAULT '[]',
   description TEXT,
   model_version TEXT NOT NULL DEFAULT 'v0',
