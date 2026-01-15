@@ -1,8 +1,9 @@
-"""Cloudflare R2 client using boto3 S3-compatible API with robust retry handling."""
+"""Cloudflare R2 client using custom domain for downloads and boto3 for uploads."""
 
 import os
 import time
 import boto3
+import httpx
 from botocore.config import Config
 from botocore.exceptions import ClientError, ConnectionError, EndpointConnectionError
 from typing import Optional, Dict, Any
@@ -12,61 +13,45 @@ logger = get_logger(__name__)
 
 R2_MAX_RETRIES = int(os.environ.get('R2_MAX_RETRIES', '3'))
 R2_RETRY_DELAY = float(os.environ.get('R2_RETRY_DELAY', '1.0'))
+R2_CUSTOM_DOMAIN = os.environ.get('R2_CUSTOM_DOMAIN', 'https://assets.chapterbridge.com')
 
 
 class R2Client:
-    """Client for interacting with Cloudflare R2 storage with retry logic."""
+    """Client for interacting with Cloudflare R2 storage via custom domain (downloads) and boto3 (uploads)."""
     
     def __init__(self):
         self.endpoint = os.environ.get('R2_ENDPOINT')
         self.access_key = os.environ.get('R2_ACCESS_KEY_ID')
         self.secret_key = os.environ.get('R2_SECRET_ACCESS_KEY')
         self.bucket = os.environ.get('R2_BUCKET', 'chapterbridge-data')
+        self.custom_domain = R2_CUSTOM_DOMAIN
         self.max_retries = R2_MAX_RETRIES
         self.retry_delay = R2_RETRY_DELAY
         
         if not all([self.endpoint, self.access_key, self.secret_key]):
             raise ValueError("R2 credentials not fully configured. Check R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         
-        # Fix SSL handshake issues with Cloudflare R2
-        # Create custom SSL context that doesn't verify certificates
-        import ssl
-        import urllib3
-        from botocore.client import ClientCreator
+        # HTTP client for downloads via custom domain (bypasses R2 endpoint TLS issues)
+        self.http_client = httpx.Client(
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            follow_redirects=True,
+            http2=True
+        )
         
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
-        # Create unverified SSL context
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        
-        # Monkey patch botocore to use unverified SSL
-        import botocore.httpsession
-        original_send = botocore.httpsession.URLLib3Session.send
-        
-        def unverified_send(self, request):
-            # Force SSL verification off
-            if hasattr(self, 'http'):
-                self.http.verify = False
-            return original_send(self, request)
-        
-        botocore.httpsession.URLLib3Session.send = unverified_send
-        
+        # boto3 client for uploads only (S3 API required)
         self.client = boto3.client(
             's3',
             endpoint_url=self.endpoint,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
-            verify=False,
             config=Config(
                 signature_version='s3v4',
-                retries={'max_attempts': 0},  # Disable botocore retries, we handle it
+                retries={'max_attempts': 0},
                 connect_timeout=30,
                 read_timeout=60
             )
         )
-        logger.info(f"R2 client initialized for bucket: {self.bucket} (SSL verification disabled, max_retries: {self.max_retries})")
+        logger.info(f"R2 client initialized - Downloads: {self.custom_domain}, Uploads: {self.bucket} (max_retries: {self.max_retries})")
     
     def _should_retry(self, error: Exception, attempt: int) -> bool:
         """Determine if operation should be retried."""
@@ -104,7 +89,7 @@ class R2Client:
     
     def download(self, key: str, fail_if_missing: bool = True) -> Optional[bytes]:
         """
-        Download a file from R2.
+        Download a file from R2 via custom domain (bypasses R2 endpoint TLS issues).
         
         Args:
             key: The R2 key to download
@@ -114,23 +99,28 @@ class R2Client:
             File contents as bytes, or None if not found and fail_if_missing=False
         """
         def _download():
-            response = self.client.get_object(Bucket=self.bucket, Key=key)
-            data = response['Body'].read()
-            logger.debug(f"Downloaded {len(data)} bytes from {key}")
+            url = f"{self.custom_domain}/{key}"
+            response = self.http_client.get(url)
+            
+            if response.status_code == 404:
+                if fail_if_missing:
+                    raise FileNotFoundError(f"R2 key not found: {key}")
+                return None
+            
+            response.raise_for_status()
+            data = response.content
+            logger.debug(f"Downloaded {len(data)} bytes from {key} via custom domain")
             return data
         
         try:
             return self._retry_operation(_download)
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            if error_code == 'NoSuchKey' or error_code == '404':
-                if fail_if_missing:
-                    logger.error(f"Required file not found in R2: {key}")
-                    raise FileNotFoundError(f"R2 key not found: {key}")
-                else:
-                    logger.debug(f"File not found (optional): {key}")
-                    return None
-            raise
+        except FileNotFoundError:
+            if fail_if_missing:
+                logger.error(f"Required file not found in R2: {key}")
+                raise
+            else:
+                logger.debug(f"File not found (optional): {key}")
+                return None
         except Exception as e:
             logger.error(f"Failed to download {key}: {e}")
             raise
@@ -181,15 +171,13 @@ class R2Client:
         return self.upload(key, text.encode(encoding), 'text/plain; charset=utf-8')
     
     def exists(self, key: str) -> bool:
-        """Check if a key exists in R2."""
+        """Check if a key exists in R2 via custom domain."""
         try:
-            self.client.head_object(Bucket=self.bucket, Key=key)
-            return True
-        except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            if error_code == '404' or error_code == 'NoSuchKey':
-                return False
-            raise
+            url = f"{self.custom_domain}/{key}"
+            response = self.http_client.head(url)
+            return response.status_code == 200
+        except Exception:
+            return False
     
     def delete(self, key: str) -> bool:
         """Delete a file from R2."""
