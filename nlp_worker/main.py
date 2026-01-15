@@ -218,9 +218,6 @@ class NLPPackWorker:
                     summary=summary_data.get('summary', ''),
                     summary_short=summary_data.get('summary_short', ''),
                     events=summary_data.get('events', []),
-                    beats=summary_data.get('beats', []),
-                    key_dialogue=summary_data.get('key_dialogue', []),
-                    tone=summary_data.get('tone', {}),
                     model_version=MODEL_VERSION
                 )
             output_result['summary_upserted'] = True

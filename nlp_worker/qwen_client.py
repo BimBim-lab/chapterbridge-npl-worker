@@ -73,29 +73,37 @@ TASK: Analyze the provided story text and output a JSON object with the followin
    - summary: Detailed factual summary of events (2-4 paragraphs)
    - summary_short: 1-2 sentence headline
    - events: Chronological bullet list of key events (array of strings)
-   - beats: Story structure beats (array of objects with type and description)
-   - key_dialogue: Important quotes (array of objects with speaker, text, optional to and importance)
-   - tone: Object with primary (string), secondary (array of strings), and intensity (0-1 number)
 
-2. **segment_entities**: Extract all entities. EVERY field MUST be an array (never null):
-   - characters, locations, items, time_refs, organizations, factions, titles_ranks,
-   - skills, creatures, concepts, relationships, emotions, keywords
+2. **segment_entities**: Extract entities from the text:
+   - characters: Array of character objects with name, role, mentions
+   - locations: Array of location objects with name, type, mentions
+   - keywords: Array of keyword objects with term, relevance, frequency
+   - time_context: Single string indicating time context: "present", "past", "future", "mixed", or "unknown"
 
 3. **character_updates** (media_type: {media_type}):
 {char_instruction}
 
 EXAMPLE OUTPUT STRUCTURE:
 {{
-  "segment_summary": {{...}},
-  "segment_entities": {{...}},
+  "segment_summary": {{
+    "summary": "Detailed summary...",
+    "summary_short": "Brief headline",
+    "events": ["Event 1", "Event 2", "Event 3"]
+  }},
+  "segment_entities": {{
+    "characters": [{{"name": "Character Name", "role": "protagonist", "mentions": 15}}],
+    "locations": [{{"name": "City Name", "type": "city", "mentions": 5}}],
+    "keywords": [{{"term": "keyword", "relevance": 0.9, "frequency": 10}}],
+    "time_context": "present"
+  }},
 {char_example}
 }}
 
 CRITICAL RULES:
 - ⚠️ Extract ONLY from the provided text. NO external knowledge, NO other stories.
 - ⚠️ Character names MUST be actual proper nouns from the text. NO "the protagonist", NO generic terms.
-- All segment_entities fields MUST be arrays (use [] if empty).
-- Empty string "" for profile fields not mentioned in text.
+- time_context must be one of: "present", "past", "future", "mixed", "unknown"
+- All segment_entities list fields MUST be arrays (use [] if empty).
 - OUTPUT ONLY VALID JSON."""
 
 

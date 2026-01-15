@@ -221,20 +221,14 @@ class SupabaseClient:
         summary: str,
         summary_short: str,
         events: List,
-        beats: List,
-        key_dialogue: List,
-        tone: Dict,
         model_version: str
     ) -> Dict:
-        """Upsert segment summary."""
+        """Upsert segment summary - simplified schema."""
         result = self.client.table('segment_summaries').upsert({
             'segment_id': segment_id,
             'summary': summary,
             'summary_short': summary_short,
             'events': events,
-            'beats': beats,
-            'key_dialogue': key_dialogue,
-            'tone': tone,
             'model_version': model_version
         }, on_conflict='segment_id').execute()
         
@@ -257,22 +251,13 @@ class SupabaseClient:
         entities: Dict,
         model_version: str
     ) -> Dict:
-        """Upsert segment entities."""
+        """Upsert segment entities - simplified schema."""
         data = {
             'segment_id': segment_id,
             'characters': entities.get('characters', []),
             'locations': entities.get('locations', []),
-            'items': entities.get('items', []),
-            'time_refs': entities.get('time_refs', []),
-            'organizations': entities.get('organizations', []),
-            'factions': entities.get('factions', []),
-            'titles_ranks': entities.get('titles_ranks', []),
-            'skills': entities.get('skills', []),
-            'creatures': entities.get('creatures', []),
-            'concepts': entities.get('concepts', []),
-            'relationships': entities.get('relationships', []),
-            'emotions': entities.get('emotions', []),
             'keywords': entities.get('keywords', []),
+            'time_context': entities.get('time_context', 'unknown'),
             'model_version': model_version
         }
         

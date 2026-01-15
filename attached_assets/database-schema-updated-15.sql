@@ -170,9 +170,6 @@ CREATE TABLE segment_summaries (
   summary TEXT NOT NULL,
   summary_short TEXT,
   events JSONB NOT NULL DEFAULT '[]',
-  beats JSONB NOT NULL DEFAULT '[]',
-  key_dialogue JSONB NOT NULL DEFAULT '[]',
-  tone JSONB NOT NULL DEFAULT '{}',
   model_version TEXT NOT NULL DEFAULT 'v0',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -180,23 +177,14 @@ CREATE TABLE segment_summaries (
 );
 CREATE INDEX idx_segment_summaries_segment ON segment_summaries(segment_id);
 
--- Segment Entities (extracted characters, locations, items, time refs)
+-- Segment Entities (extracted characters, locations, keywords, time context)
 CREATE TABLE segment_entities (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   segment_id UUID NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
   characters JSONB NOT NULL DEFAULT '[]',
   locations JSONB NOT NULL DEFAULT '[]',
-  items JSONB NOT NULL DEFAULT '[]',
-  time_refs JSONB NOT NULL DEFAULT '[]',
-  organizations JSONB NOT NULL DEFAULT '[]',
-  factions JSONB NOT NULL DEFAULT '[]',
-  titles_ranks JSONB NOT NULL DEFAULT '[]',
-  skills JSONB NOT NULL DEFAULT '[]',
-  creatures JSONB NOT NULL DEFAULT '[]',
-  concepts JSONB NOT NULL DEFAULT '[]',
-  relationships JSONB NOT NULL DEFAULT '[]',
-  emotions JSONB NOT NULL DEFAULT '[]',
   keywords JSONB NOT NULL DEFAULT '[]',
+  time_context TEXT NOT NULL DEFAULT 'unknown',
   model_version TEXT NOT NULL DEFAULT 'v0',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -341,28 +329,6 @@ scraper_templates.config:
     "content": "div.reading-content",
  
 
-segment_summaries.beats:
-[
-  {"type": "inciting_incident", "description": "Jinwoo accepts dangerous dungeon mission"},
-  {"type": "turning_point", "description": "System awakens after near-death"},
-  {"type": "climax", "description": "Defeats all statue soldiers"}
-]
-
-segment_summaries.key_dialogue:
-[
-  {"speaker": "Sung Jinwoo", "text": "I will survive", "importance": "high"},
-  {"speaker": "System", "text": "You have been selected", "importance": "critical"}
-]
-
-segment_summaries.tone:
-{
-  "primary": "suspenseful",
-  "secondary": ["dark", "hopeful"],
-  "intensity": 0.85
-}   "chapter_list": "ul.main.version-chap li a"
-  }
-}
-
 segment_summaries.events:
 [
   "Sung Jinwoo enters the double dungeon",
@@ -371,51 +337,6 @@ segment_summaries.events:
 ]
 
 
-segment_entities.organizations:
-[
-  {"name": "Hunter Association", "type": "government", "mentions": 15}
-]
-
-segment_entities.factions:
-[
-  {"name": "Shadow Army", "alignment": "protagonist", "mentions": 8}
-]
-
-segment_entities.titles_ranks:
-[
-  {"name": "S-Rank Hunter", "holder": "Sung Jinwoo", "mentions": 5}
-]
-
-segment_entities.skills:
-[
-  {"name": "Shadow Extraction", "type": "active", "user": "Sung Jinwoo", "mentions": 12}
-]
-
-segment_entities.creatures:
-[
-  {"name": "Ants", "type": "monster", "threat_level": "S", "mentions": 20}
-]
-
-segment_entities.concepts:
-[
-  {"name": "The System", "type": "game_mechanic", "mentions": 30}
-]
-
-segment_entities.relationships:
-[
-  {"from": "Sung Jinwoo", "to": "Yoo Jinho", "type": "friendship", "strength": 0.9}
-]
-
-segment_entities.emotions:
-[
-  {"character": "Sung Jinwoo", "emotion": "determination", "intensity": 0.95, "context": "facing enemies"}
-]
-
-segment_entities.keywords:
-[
-  {"term": "leveling", "relevance": 0.98, "frequency": 15},
-  {"term": "dungeon", "relevance": 0.92, "frequency": 25}
-]
 segment_entities.characters:
 [
   {"name": "Sung Jinwoo", "role": "protagonist", "mentions": 45},
@@ -427,15 +348,14 @@ segment_entities.locations:
   {"name": "Seoul", "type": "city", "mentions": 8}
 ]
 
-segment_entities.items:
+segment_entities.keywords:
 [
-  {"name": "System Window", "type": "interface", "mentions": 20}
+  {"term": "leveling", "relevance": 0.98, "frequency": 15},
+  {"term": "dungeon", "relevance": 0.92, "frequency": 25}
 ]
 
-segment_entities.time_refs:
-[
-  {"reference": "10 years ago", "type": "relative"}
-]
+segment_entities.time_context:
+"present" | "flashback" | "future" | "unknown"
 
 segment_mappings.evidence:
 [

@@ -9,44 +9,11 @@ from .utils import get_logger
 logger = get_logger(__name__)
 
 
-class ToneModel(BaseModel):
-    """Tone analysis model."""
-    primary: str = ""
-    secondary: List[str] = Field(default_factory=list)
-    intensity: float = 0.5
-
-    @field_validator('secondary', mode='before')
-    @classmethod
-    def ensure_secondary_list(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [v]
-        return list(v) if v else []
-
-
-class DialogueModel(BaseModel):
-    """Key dialogue entry."""
-    speaker: str
-    text: str
-    to: Optional[str] = None
-    importance: str = "normal"
-
-
-class BeatModel(BaseModel):
-    """Story beat model."""
-    type: str = ""
-    description: str = ""
-
-
 class SegmentSummaryModel(BaseModel):
-    """Segment summary model with all required fields."""
+    """Segment summary model - simplified structure."""
     summary: str = ""
     summary_short: str = ""
     events: List[str] = Field(default_factory=list)
-    beats: List[Dict[str, Any]] = Field(default_factory=list)
-    key_dialogue: List[Dict[str, Any]] = Field(default_factory=list)
-    tone: Dict[str, Any] = Field(default_factory=lambda: {"primary": "", "secondary": [], "intensity": 0.5})
 
     @field_validator('events', mode='before')
     @classmethod
@@ -57,56 +24,37 @@ class SegmentSummaryModel(BaseModel):
             return [v]
         return list(v) if v else []
 
-    @field_validator('beats', 'key_dialogue', mode='before')
-    @classmethod
-    def ensure_list(cls, v):
-        if v is None:
-            return []
-        return list(v) if v else []
-
-    @field_validator('tone', mode='before')
-    @classmethod
-    def ensure_tone_dict(cls, v):
-        if v is None or not isinstance(v, dict):
-            return {"primary": "", "secondary": [], "intensity": 0.5}
-        if 'secondary' not in v or v['secondary'] is None:
-            v['secondary'] = []
-        if 'intensity' not in v or v['intensity'] is None:
-            v['intensity'] = 0.5
-        return v
-
 
 class SegmentEntitiesModel(BaseModel):
-    """Segment entities model - all fields must be lists."""
+    """Segment entities model - simplified structure."""
     characters: List[Any] = Field(default_factory=list)
     locations: List[Any] = Field(default_factory=list)
-    items: List[Any] = Field(default_factory=list)
-    time_refs: List[Any] = Field(default_factory=list)
-    organizations: List[Any] = Field(default_factory=list)
-    factions: List[Any] = Field(default_factory=list)
-    titles_ranks: List[Any] = Field(default_factory=list)
-    skills: List[Any] = Field(default_factory=list)
-    creatures: List[Any] = Field(default_factory=list)
-    concepts: List[Any] = Field(default_factory=list)
-    relationships: List[Any] = Field(default_factory=list)
-    emotions: List[Any] = Field(default_factory=list)
     keywords: List[Any] = Field(default_factory=list)
+    time_context: str = "unknown"
+
+    @field_validator('time_context', mode='before')
+    @classmethod
+    def validate_time_context(cls, v):
+        """Ensure time_context is valid."""
+        if not v or not isinstance(v, str):
+            return "unknown"
+        valid_values = ['present', 'past', 'future', 'mixed', 'unknown']
+        v_lower = v.lower().strip()
+        return v_lower if v_lower in valid_values else "unknown"
 
     @model_validator(mode='before')
     @classmethod
     def ensure_all_lists(cls, data):
         if not isinstance(data, dict):
-            return {}
-        fields = [
-            'characters', 'locations', 'items', 'time_refs', 'organizations',
-            'factions', 'titles_ranks', 'skills', 'creatures', 'concepts',
-            'relationships', 'emotions', 'keywords'
-        ]
+            return {'time_context': 'unknown'}
+        fields = ['characters', 'locations', 'keywords']
         for field in fields:
             if field not in data or data[field] is None:
                 data[field] = []
             elif not isinstance(data[field], list):
                 data[field] = [data[field]] if data[field] else []
+        if 'time_context' not in data:
+            data['time_context'] = 'unknown'
         return data
 
 
@@ -241,69 +189,39 @@ def validate_and_normalize(raw_output: Dict[str, Any]) -> tuple[bool, Dict[str, 
 
 
 def get_vllm_guided_json_schema() -> Dict[str, Any]:
-    """Get the JSON schema for vLLM guided generation."""
+    """Get the JSON schema for vLLM guided generation - simplified structure."""
     return {
         "type": "object",
         "required": ["segment_summary", "segment_entities"],
         "properties": {
             "segment_summary": {
                 "type": "object",
-                "required": ["summary", "summary_short", "events", "beats", "key_dialogue", "tone"],
+                "required": ["summary", "summary_short", "events"],
                 "properties": {
                     "summary": {"type": "string"},
                     "summary_short": {"type": "string"},
-                    "events": {"type": "array", "items": {"type": "string"}},
-                    "beats": {"type": "array", "items": {"type": "object"}},
-                    "key_dialogue": {"type": "array", "items": {"type": "object"}},
-                    "tone": {"type": "object"}
+                    "events": {"type": "array", "items": {"type": "string"}}
                 }
             },
             "segment_entities": {
                 "type": "object",
-                "required": [
-                    "characters", "locations", "items", "time_refs", "organizations",
-                    "factions", "titles_ranks", "skills", "creatures", "concepts",
-                    "relationships", "emotions", "keywords"
-                ],
+                "required": ["characters", "locations", "keywords", "time_context"],
                 "properties": {
                     "characters": {"type": "array"},
                     "locations": {"type": "array"},
-                    "items": {"type": "array"},
-                    "time_refs": {"type": "array"},
-                    "organizations": {"type": "array"},
-                    "factions": {"type": "array"},
-                    "titles_ranks": {"type": "array"},
-                    "skills": {"type": "array"},
-                    "creatures": {"type": "array"},
-                    "concepts": {"type": "array"},
-                    "relationships": {"type": "array"},
-                    "emotions": {"type": "array"},
-                    "keywords": {"type": "array"}
+                    "keywords": {"type": "array"},
+                    "time_context": {"type": "string", "enum": ["present", "past", "future", "mixed", "unknown"]}
                 }
             },
             "character_updates": {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["name", "profile"],
+                    "required": ["name", "aliases", "facts"],
                     "properties": {
                         "name": {"type": "string"},
                         "aliases": {"type": "array", "items": {"type": "string"}},
-                        "profile": {
-                            "type": "object",
-                            "properties": {
-                                "role_identity": {"type": "string"},
-                                "occupation_rank_status": {"type": "string"},
-                                "affiliation": {"type": "string"},
-                                "core_ability_or_skill": {"type": "string"},
-                                "core_personality": {"type": "string"},
-                                "motivation_or_goal": {"type": "string"},
-                                "key_relationship": {"type": "string"},
-                                "distinctive_appearance": {"type": "string"},
-                                "backstory_hook": {"type": "string"},
-                                "notable_constraint_or_secret": {"type": "string"}
-                            }
-                        }
+                        "facts": {"type": "array", "items": {"type": "string"}}
                     }
                 }
             }
