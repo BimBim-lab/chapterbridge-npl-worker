@@ -32,10 +32,11 @@ class R2Client:
             raise ValueError("R2 credentials not fully configured. Check R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY")
         
         # HTTP client for downloads via custom domain (bypasses R2 endpoint TLS issues)
+        # Disable HTTP/2 to avoid intermittent connection drops with Cloudflare CDN
         self.http_client = httpx.Client(
             timeout=httpx.Timeout(30.0, connect=10.0),
             follow_redirects=True,
-            http2=True
+            http2=False
         )
         
         # boto3 client for uploads only (S3 API required)
@@ -58,7 +59,12 @@ class R2Client:
         if attempt >= self.max_retries:
             return False
         
+        # Retry on network errors
         if isinstance(error, (ConnectionError, EndpointConnectionError)):
+            return True
+        
+        # Retry on httpx connection issues (HTTP/2 disconnects, etc)
+        if isinstance(error, (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout)):
             return True
         
         if isinstance(error, ClientError):
