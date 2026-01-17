@@ -218,6 +218,7 @@ class SupabaseClient:
     def upsert_segment_summary(
         self,
         segment_id: str,
+        edition_id: str,
         summary: str,
         summary_short: str,
         events: List,
@@ -226,6 +227,7 @@ class SupabaseClient:
         """Upsert segment summary - simplified schema."""
         result = self.client.table('segment_summaries').upsert({
             'segment_id': segment_id,
+            'edition_id': edition_id,
             'summary': summary,
             'summary_short': summary_short,
             'events': events,
@@ -248,12 +250,14 @@ class SupabaseClient:
     def upsert_segment_entities(
         self,
         segment_id: str,
+        edition_id: str,
         entities: Dict,
         model_version: str
     ) -> Dict:
         """Upsert segment entities - simplified schema."""
         data = {
             'segment_id': segment_id,
+            'edition_id': edition_id,
             'characters': entities.get('characters', []),
             'locations': entities.get('locations', []),
             'keywords': entities.get('keywords', []),

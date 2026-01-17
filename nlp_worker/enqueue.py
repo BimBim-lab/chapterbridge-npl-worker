@@ -13,12 +13,7 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def get_segments_missing_nlp(
-    db,
-    limit: Optional[int] = None,
-    work_id: Optional[str] = None,
-    media_type: Optional[str] = None,
-) -> List[Dict]:
+def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
     """
     Find segments that are missing any NLP outputs using efficient batch query.
     
@@ -26,84 +21,102 @@ def get_segments_missing_nlp(
     - segment_summaries row
     - segment_entities row
     """
-    page_size = 1000
+    # Try using SQL with LEFT JOINs - much more efficient!
+    query = """
+    SELECT 
+        s.id as segment_id,
+        s.segment_type,
+        s.number,
+        s.title,
+        e.media_type,
+        e.work_id,
+        e.id as edition_id,
+        CASE WHEN ss.segment_id IS NOT NULL THEN true ELSE false END as has_summary,
+        CASE WHEN se.segment_id IS NOT NULL THEN true ELSE false END as has_entities
+    FROM segments s
+    JOIN editions e ON s.edition_id = e.id
+    LEFT JOIN segment_summaries ss ON ss.segment_id = s.id
+    LEFT JOIN segment_entities se ON se.segment_id = s.id
+    WHERE ss.segment_id IS NULL OR se.segment_id IS NULL
+    ORDER BY e.work_id, s.number
+    """
+    
     if limit:
-        page_size = max(50, min(page_size, limit * 3))
-
-    segments: List[Dict] = []
-    offset = 0
-
+        query += f" LIMIT {limit}"
+    
     try:
-        while True:
-            query_builder = db.client.table('segments').select(
-                '''
-                id,
-                segment_type,
-                number,
-                title,
-                editions!inner(id, work_id, media_type),
-                segment_summaries!left(segment_id),
-                segment_entities!left(segment_id),
-                segment_assets!left(assets(asset_type))
-                '''
-            )
-
-            if work_id:
-                query_builder = query_builder.eq('editions.work_id', work_id)
-            if media_type:
-                query_builder = query_builder.eq('editions.media_type', media_type)
-
-            query_builder = query_builder.range(offset, offset + page_size - 1)
-            result = query_builder.execute()
-            rows = result.data or []
-
-            for row in rows:
-                row_media_type = row['editions']['media_type']
-
-                # Require presence of raw asset per media type
-                segment_assets = row.get('segment_assets') or []
-                has_raw_asset = False
-                for asset in segment_assets:
-                    asset_type = asset.get('assets', {}).get('asset_type', '')
-                    if row_media_type == 'novel' and asset_type in ('raw_html', 'cleaned_text'):
-                        has_raw_asset = True
-                        break
-                    if row_media_type == 'manhwa' and asset_type == 'raw_image':
-                        has_raw_asset = True
-                        break
-                    if row_media_type == 'anime' and asset_type == 'raw_subtitle':
-                        has_raw_asset = True
-                        break
-
-                if not has_raw_asset:
-                    continue
-
-                has_summary = len(row.get('segment_summaries') or []) > 0
-                has_entities = len(row.get('segment_entities') or []) > 0
-
-                if has_summary and has_entities:
-                    continue
-
+        # Try direct SQL execution via RPC or raw SQL
+        result = db.client.rpc('execute_sql', {'query': query}).execute()
+        if result.data:
+            return result.data
+    except Exception as e:
+        logger.debug(f"RPC execute_sql not available: {e}")
+    
+    # Fallback: use optimized Supabase query with single request
+    try:
+        query_builder = db.client.table('segments').select(
+            '''
+            id,
+            segment_type,
+            number,
+            title,
+            editions!inner(id, work_id, media_type),
+            segment_summaries!left(segment_id),
+            segment_entities!left(segment_id),
+            segment_assets!left(assets(asset_type))
+            '''
+        )
+        
+        if limit:
+            query_builder = query_builder.limit(limit * 3)  # Get more to filter
+        
+        result = query_builder.execute()
+        
+        segments = []
+        for row in result.data or []:
+            media_type = row['editions']['media_type']
+            
+            # Check if segment has required raw asset based on media type
+            segment_assets = row.get('segment_assets') or []
+            has_raw_asset = False
+            
+            for asset in segment_assets:
+                asset_type = asset.get('assets', {}).get('asset_type', '')
+                if media_type == 'novel' and asset_type in ('raw_html', 'cleaned_text'):
+                    has_raw_asset = True
+                    break
+                elif media_type == 'manhwa' and asset_type == 'raw_image':
+                    has_raw_asset = True
+                    break
+                elif media_type == 'anime' and asset_type == 'raw_subtitle':
+                    has_raw_asset = True
+                    break
+            
+            # Skip segments without raw assets
+            if not has_raw_asset:
+                continue
+            
+            # Check if outputs exist
+            has_summary = len(row.get('segment_summaries') or []) > 0
+            has_entities = len(row.get('segment_entities') or []) > 0
+            
+            # Only include if missing any output
+            if not (has_summary and has_entities):
                 segments.append({
                     'segment_id': row['id'],
                     'segment_type': row['segment_type'],
                     'number': row['number'],
                     'title': row.get('title'),
-                    'media_type': row_media_type,
+                    'media_type': media_type,
                     'work_id': row['editions']['work_id'],
                     'edition_id': row['editions']['id'],
                     'has_summary': has_summary,
                     'has_entities': has_entities
                 })
-
+                
                 if limit and len(segments) >= limit:
-                    return segments
-
-            if len(rows) < page_size:
-                break
-
-            offset += page_size
-
+                    break
+        
         return segments
     except Exception as e:
         logger.error(f"Failed to query missing segments: {e}")
@@ -121,30 +134,6 @@ def check_pending_job(db, segment_id: str) -> bool:
     ).execute()
     
     return bool(result.data)
-
-
-def get_pending_map(db, segment_ids: List[str], chunk_size: int = 200) -> set:
-    """Batch check pending jobs for many segment ids, return set of pending segment_ids."""
-    pending: set = set()
-    if not segment_ids:
-        return pending
-
-    for i in range(0, len(segment_ids), chunk_size):
-        chunk = segment_ids[i:i + chunk_size]
-        result = db.client.table('pipeline_jobs').select('segment_id').in_(
-            'segment_id', chunk
-        ).eq(
-            'job_type', 'summarize'
-        ).in_(
-            'status', ['queued', 'running']
-        ).execute()
-
-        for row in result.data or []:
-            sid = row.get('segment_id')
-            if sid:
-                pending.add(sid)
-
-    return pending
 
 
 def enqueue_jobs(
@@ -170,18 +159,20 @@ def enqueue_jobs(
     db = get_supabase_client()
     
     logger.info("Finding segments missing NLP processing...")
-    segments = get_segments_missing_nlp(
-        db,
-        limit=limit,
-        work_id=work_id,
-        media_type=media_type
-    )
+    segments = get_segments_missing_nlp(db, limit=limit)
+    
+    if work_id:
+        segments = [s for s in segments if s['work_id'] == work_id]
+    
+    if media_type:
+        segments = [s for s in segments if s['media_type'] == media_type]
+    
+    if limit:
+        segments = segments[:limit]
     
     logger.info(f"Found {len(segments)} segments to process")
     
     stats = {'enqueued': 0, 'skipped_pending': 0, 'skipped_complete': 0}
-
-    pending_map = get_pending_map(db, [s['segment_id'] for s in segments])
     
     for seg in segments:
         segment_id = seg['segment_id']
@@ -192,7 +183,7 @@ def enqueue_jobs(
                 stats['skipped_complete'] += 1
                 continue
         
-        if segment_id in pending_map:
+        if check_pending_job(db, segment_id):
             logger.debug(f"Segment {segment_id} already has pending job")
             stats['skipped_pending'] += 1
             continue

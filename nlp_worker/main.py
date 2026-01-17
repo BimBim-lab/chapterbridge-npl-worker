@@ -157,6 +157,7 @@ class NLPPackWorker:
             raise ValueError(f"Segment {segment_id} not found")
         
         edition = segment['editions']
+        edition_id = segment['edition_id']
         media_type = edition['media_type']
         work_id = edition['work_id']
         segment_type = segment['segment_type']
@@ -210,6 +211,7 @@ class NLPPackWorker:
                 summary_data = model_output['segment_summary']
                 self.db.upsert_segment_summary(
                     segment_id=segment_id,
+                    edition_id=edition_id,
                     summary=summary_data.get('summary', ''),
                     summary_short=summary_data.get('summary_short', ''),
                     events=summary_data.get('events', []),
@@ -226,6 +228,7 @@ class NLPPackWorker:
             else:
                 self.db.upsert_segment_entities(
                     segment_id=segment_id,
+                    edition_id=edition_id,
                     entities=model_output['segment_entities'],
                     model_version=MODEL_VERSION
                 )

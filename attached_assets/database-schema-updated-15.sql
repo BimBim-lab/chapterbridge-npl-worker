@@ -166,6 +166,7 @@ CREATE INDEX idx_pipeline_jobs_created_at ON pipeline_jobs(created_at DESC);
 CREATE TABLE segment_summaries (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   segment_id UUID NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+  edition_id UUID REFERENCES editions(id) ON DELETE CASCADE,
   summary TEXT NOT NULL,
   summary_short TEXT,
   events JSONB NOT NULL DEFAULT '[]',
@@ -175,11 +176,13 @@ CREATE TABLE segment_summaries (
   UNIQUE(segment_id)
 );
 CREATE INDEX idx_segment_summaries_segment ON segment_summaries(segment_id);
+CREATE INDEX idx_segment_summaries_edition_id ON segment_summaries(edition_id);
 
 -- Segment Entities (extracted characters, locations, keywords, time context)
 CREATE TABLE segment_entities (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   segment_id UUID NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+  edition_id UUID REFERENCES editions(id) ON DELETE CASCADE,
   characters JSONB NOT NULL DEFAULT '[]',
   locations JSONB NOT NULL DEFAULT '[]',
   keywords JSONB NOT NULL DEFAULT '[]',
@@ -190,6 +193,7 @@ CREATE TABLE segment_entities (
   UNIQUE(segment_id)
 );
 CREATE INDEX idx_segment_entities_segment ON segment_entities(segment_id);
+CREATE INDEX idx_segment_entities_edition_id ON segment_entities(edition_id);
 
 -- Segment Embeddings (vector embeddings for similarity search)
 CREATE TABLE segment_embeddings (
