@@ -13,13 +13,24 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
+def get_segments_missing_nlp(
+    db, 
+    limit: Optional[int] = None,
+    work_id: Optional[str] = None,
+    edition_id: Optional[str] = None
+) -> List[Dict]:
     """
     Find segments that are missing any NLP outputs using efficient batch query.
     
     Checks for missing:
     - segment_summaries row
     - segment_entities row
+    
+    Args:
+        db: Database client
+        limit: Maximum results to return (applied after filtering)
+        work_id: Filter by specific work_id
+        edition_id: Filter by specific edition_id
     """
     # Try using SQL with LEFT JOINs - much more efficient!
     query = """
@@ -37,9 +48,16 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
     JOIN editions e ON s.edition_id = e.id
     LEFT JOIN segment_summaries ss ON ss.segment_id = s.id
     LEFT JOIN segment_entities se ON se.segment_id = s.id
-    WHERE ss.segment_id IS NULL OR se.segment_id IS NULL
-    ORDER BY e.work_id, s.number
+    WHERE (ss.segment_id IS NULL OR se.segment_id IS NULL)
     """
+    
+    # Add filters to SQL query
+    if work_id:
+        query += f" AND e.work_id = '{work_id}'"
+    if edition_id:
+        query += f" AND e.id = '{edition_id}'"
+    
+    query += " ORDER BY e.work_id, s.number"
     
     if limit:
         query += f" LIMIT {limit}"
@@ -54,12 +72,28 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
     
     # Fallback: use optimized Supabase query with single request
     try:
+        # If work_id provided, get edition_ids first to filter properly
+        edition_ids_to_filter = []
+        if work_id:
+            logger.info(f"Fetching editions for work_id: {work_id}")
+            editions = db.client.table('editions').select('id').eq('work_id', work_id).execute()
+            edition_ids_to_filter = [e['id'] for e in editions.data]
+            logger.info(f"Found {len(edition_ids_to_filter)} editions: {edition_ids_to_filter}")
+            if not edition_ids_to_filter:
+                logger.warning(f"No editions found for work_id {work_id}")
+                return []
+        
+        if edition_id:
+            edition_ids_to_filter = [edition_id]
+            logger.info(f"Using edition_id filter: {edition_id}")
+        
         query_builder = db.client.table('segments').select(
             '''
             id,
             segment_type,
             number,
             title,
+            edition_id,
             editions!inner(id, work_id, media_type),
             segment_summaries!left(segment_id),
             segment_entities!left(segment_id),
@@ -67,10 +101,22 @@ def get_segments_missing_nlp(db, limit: Optional[int] = None) -> List[Dict]:
             '''
         )
         
-        if limit:
-            query_builder = query_builder.limit(limit * 3)  # Get more to filter
+        # Filter by edition_id directly (more reliable than nested filter)
+        if edition_ids_to_filter:
+            logger.info(f"Applying edition_id filter, fetching up to 10000 segments")
+            query_builder = query_builder.in_('edition_id', edition_ids_to_filter)
+            # Fetch all segments for this work (no 1000 limit)
+            query_builder = query_builder.limit(10000)
+        elif limit:
+            # Only apply limit if no work/edition filter
+            query_builder = query_builder.limit(limit * 3)
+        else:
+            # Default: fetch first 1000
+            query_builder = query_builder.limit(1000)
         
+        logger.info("Executing segments query...")
         result = query_builder.execute()
+        logger.info(f"Query returned {len(result.data or [])} segments")
         
         segments = []
         for row in result.data or []:
@@ -147,10 +193,8 @@ def enqueue_jobs(
     Enqueue NLP pack jobs for segments missing processing.
     
     Args:
-        force: If True, enqueue even if some outputs exist
-        limit: Maximum number of jobs to enqueue
-        work_id: Filter to specific work
-        media_type: Filter to specific media type
+    # Pass work_id to query to avoid pagination issues
+    segments = get_segments_missing_nlp(db, limit=None, work_id=work_id)
         dry_run: If True, only show what would be enqueued
     
     Returns:
@@ -159,18 +203,20 @@ def enqueue_jobs(
     db = get_supabase_client()
     
     logger.info("Finding segments missing NLP processing...")
-    segments = get_segments_missing_nlp(db, limit=limit)
-    
-    if work_id:
-        segments = [s for s in segments if s['work_id'] == work_id]
+    # Pass work_id to query function to avoid pagination issues
+    segments = get_segments_missing_nlp(db, limit=None, work_id=work_id)
     
     if media_type:
         segments = [s for s in segments if s['media_type'] == media_type]
     
+    logger.info(f"Found {len(segments)} segments missing NLP")
+    
+    # Apply limit after all filtering
     if limit:
         segments = segments[:limit]
+        logger.info(f"Limited to {len(segments)} segments")
     
-    logger.info(f"Found {len(segments)} segments to process")
+    logger.info(f"Will process {len(segments)} segments")
     
     stats = {'enqueued': 0, 'skipped_pending': 0, 'skipped_complete': 0}
     
